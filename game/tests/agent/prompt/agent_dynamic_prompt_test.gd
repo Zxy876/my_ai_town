@@ -13,10 +13,16 @@ func _test_stable_baseline_and_dynamic_context(compiler_script: Script) -> void:
 	var initialization := _initialization()
 	var compiler: RefCounted = compiler_script.new(initialization)
 	var first_wake := _wake_packet("prompt-1", "小雨")
-	first_wake["runtime_observations"] = [{
-		"observation_id": "runtime-observation-prompt-1",
-		"text": "诊所候诊区已经有两个人等了很久。",
-	}]
+	first_wake["runtime_observations"] = [
+		{
+			"observation_id": "scenario-u0-prompt-1",
+			"text": "居民计划在傍晚共同举办欢迎派对。",
+		},
+		{
+			"observation_id": "runtime-observation-prompt-1",
+			"text": "诊所候诊区已经有两个人等了很久。",
+		},
+	]
 	var memory_prompt := "\n".join([
 		"[重要记忆]",
 		"唐小满离开后，搭话没有发生；我错过了解释机会。",
@@ -64,7 +70,14 @@ func _test_stable_baseline_and_dynamic_context(compiler_script: Script) -> void:
 		"runtime observation text enters the ordinary dynamic context",
 	)
 	_expect(
+		user_text.contains("[进入世界前共同确定的初始意图]")
+		and user_text.contains("居民计划在傍晚共同举办欢迎派对。")
+		and user_text.contains("不代表事情已经完成"),
+		"player U0 enters the first cognition as a shared initial intention",
+	)
+	_expect(
 		not user_text.contains("runtime-observation-prompt-1")
+		and not user_text.contains("scenario-u0-prompt-1")
 		and not user_text.contains("U0")
 		and not user_text.contains("U+")
 		and not user_text.contains("U-"),

@@ -39,6 +39,7 @@ var _test_root := "%s/%d_%d" % [
 
 func _initialize() -> void:
 	_test_runtime_observation_is_persisted_before_organization_and_replay_is_idempotent()
+	_test_initial_intention_remains_a_long_term_recall_baseline()
 	_test_memory_state_round_trip_preserves_queue_and_pending_action()
 	_test_version_five_state_migrates_to_formal_memory_archives()
 	_test_unconfirmed_decision_can_be_discarded()
@@ -112,6 +113,29 @@ func _test_runtime_observation_is_persisted_before_organization_and_replay_is_id
 		replay_archive.get("revision"),
 		first_archive.get("revision"),
 		"replay does not fabricate a formal-memory revision",
+	)
+
+
+func _test_initial_intention_remains_a_long_term_recall_baseline() -> void:
+	var system := _new_memory_system("initial-intention-baseline")
+	var first_wake := TestData.wake_packet("initial-intention-first")
+	first_wake["runtime_observations"] = [{
+		"observation_id": "scenario-u0-long-term-baseline",
+		"text": "居民计划在傍晚共同举办欢迎派对。",
+	}]
+	var first := system.call("prepare_context", first_wake) as Dictionary
+	_expect_ok(first, "initial intention prepares the first decision context")
+	_expect(
+		String(first.get("memory_prompt", "")).contains("共同举办欢迎派对"),
+		"the player's initial intention is recallable immediately",
+	)
+	var unrelated_later_wake := TestData.wake_packet("initial-intention-later", 7)
+	unrelated_later_wake["snapshot"]["me"]["doing"] = "在工作坊整理木料"
+	var later := system.call("retrieve_context", unrelated_later_wake) as Dictionary
+	_expect_ok(later, "later unrelated cognition retrieves memory")
+	_expect(
+		String(later.get("memory_prompt", "")).contains("共同举办欢迎派对"),
+		"the initial intention remains a bounded long-term recall baseline",
 	)
 
 

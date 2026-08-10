@@ -904,14 +904,27 @@ func _render_events(events: Array) -> String:
 func _render_runtime_observations(observations: Array) -> String:
 	if observations.is_empty():
 		return ""
-	var lines: Array[String] = ["[刚刚注意到的信息]"]
+	var initial_intentions: Array[String] = []
+	var ordinary_observations: Array[String] = []
 	for observation_value: Variant in observations:
-		if observation_value is Dictionary:
-			lines.append(
-				"- %s" % _safe(
-					(observation_value as Dictionary).get("text", ""),
-				),
-			)
+		if not observation_value is Dictionary:
+			continue
+		var observation := observation_value as Dictionary
+		var rendered := "- %s" % _safe(observation.get("text", ""))
+		if String(observation.get("observation_id", "")).begins_with("scenario-u0-"):
+			initial_intentions.append(rendered)
+		else:
+			ordinary_observations.append(rendered)
+	var lines: Array[String] = []
+	if not initial_intentions.is_empty():
+		lines.append("[进入世界前共同确定的初始意图]")
+		lines.append_array(initial_intentions)
+		lines.append("- 这是需要结合你的身份与现实条件持续推进的共同意图，不代表事情已经完成。")
+	if not ordinary_observations.is_empty():
+		if not lines.is_empty():
+			lines.append("")
+		lines.append("[刚刚注意到的信息]")
+		lines.append_array(ordinary_observations)
 	return "\n".join(lines)
 
 

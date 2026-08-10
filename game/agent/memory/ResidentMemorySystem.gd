@@ -2028,6 +2028,15 @@ func _formal_memory_relevance(
 ) -> int:
 	var score := 0
 	if (
+		String(entry.get("claim_root_id", "")).begins_with(
+			"runtime_observation:scenario-u0-"
+		)
+		and String(entry.get("state", "")) in ["influencing", "doubtful", "anomalous"]
+	):
+		# The initial intention is a long-term baseline. It remains recallable
+		# across places without bypassing the normal bounded memory budget.
+		score += 55
+	if (
 		String(entry.get("claim_root_id", "")).begins_with("reflection:")
 		and String(entry.get("state", "")) in ["influencing", "doubtful", "anomalous"]
 	):
