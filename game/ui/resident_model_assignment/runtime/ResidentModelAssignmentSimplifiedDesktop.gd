@@ -6,6 +6,7 @@ signal action_requested(action_key: String, payload: Dictionary, focus_id: Strin
 signal back_pressed
 signal assign_pressed
 signal apply_pressed
+signal initial_intention_pressed
 signal completion_modal_return_pressed
 signal completion_modal_start_pressed
 
@@ -175,7 +176,7 @@ func set_completion_modal_visible(value: bool) -> void:
 	_completion_overlay.visible = value
 	for label: Label in _completion_labels:
 		label.visible = value
-	for id: String in ["modal_return", "modal_start"]:
+	for id: String in ["modal_initial_intention", "modal_return", "modal_start"]:
 		var button := _buttons.get(id) as Button
 		if button != null:
 			button.visible = value
@@ -527,6 +528,31 @@ func _build_footer() -> void:
 		HORIZONTAL_ALIGNMENT_LEFT,
 		INK_MUTED,
 	)
+	if not in_session_mode and not single_resident_mode:
+		var initial_intention_surface := _texture_rect(
+			"InitialIntentionControlAsset",
+			Rect2(780, 814, 206, 66),
+			BATCH_SELECT_ALL_FRAME_PATH,
+		)
+		add_child(initial_intention_surface)
+		_register_border_owner(
+			initial_intention_surface,
+			"InitialIntentionControlAsset",
+			"image_frame_with_runtime_main_menu_font",
+		)
+		_add_label(
+			"InitialIntentionCopy",
+			Rect2(790, 822, 186, 50),
+			"初始意图",
+			21,
+			HORIZONTAL_ALIGNMENT_CENTER,
+		)
+		_add_hit_button(
+			"initial_intention",
+			Rect2(780, 814, 206, 66),
+			func() -> void: initial_intention_pressed.emit(),
+			"asset_text_button",
+		)
 	_assign_surface = _texture_rect(
 		"AssignControlAsset",
 		Rect2(1068, 799, 544, 96),
@@ -614,23 +640,41 @@ func _build_completion_modal() -> void:
 	_completion_message_secondary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_completion_message_secondary.visible = false
 	_completion_labels.append(_completion_message_secondary)
-	_add_modal_button(
-		"modal_return",
-		Rect2(590, 584, 234, 70),
-		"返回设置",
-		func() -> void: completion_modal_return_pressed.emit(),
-	)
-	_add_modal_button(
-		"modal_start",
-		Rect2(849, 584, 234, 70),
-		(
-			"确认入镇"
-			if single_resident_mode
-			else "保存修改" if in_session_mode else "开始游戏"
-		),
-		func() -> void: completion_modal_start_pressed.emit(),
-	)
-	for id: String in ["modal_return", "modal_start"]:
+	if not in_session_mode and not single_resident_mode:
+		_add_modal_button(
+			"modal_initial_intention",
+			Rect2(590, 584, 155, 70),
+			"初始意图",
+			func() -> void: initial_intention_pressed.emit(),
+		)
+		_add_modal_button(
+			"modal_return",
+			Rect2(759, 584, 155, 70),
+			"返回设置",
+			func() -> void: completion_modal_return_pressed.emit(),
+		)
+		_add_modal_button(
+			"modal_start",
+			Rect2(928, 584, 155, 70),
+			"开始游戏",
+			func() -> void: completion_modal_start_pressed.emit(),
+		)
+	else:
+		_add_modal_button(
+			"modal_return",
+			Rect2(590, 584, 234, 70),
+			"返回设置",
+			func() -> void: completion_modal_return_pressed.emit(),
+		)
+		_add_modal_button(
+			"modal_start",
+			Rect2(849, 584, 234, 70),
+			"确认入镇" if single_resident_mode else "保存修改",
+			func() -> void: completion_modal_start_pressed.emit(),
+		)
+	for id: String in ["modal_initial_intention", "modal_return", "modal_start"]:
+		if not _buttons.has(id):
+			continue
 		(_buttons.get(id) as Button).visible = false
 
 

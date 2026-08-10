@@ -12,6 +12,7 @@ const BACKGROUND_PROMPTS := [
 	"res://prompts/background/10_town_common_knowledge.md",
 ]
 const ORGANIZER_PROMPT := "res://prompts/memory/10_memory_organizer.md"
+const REFLECTION_FIELD := "self_vulnerability_reflection"
 const ContinuityGuardScript := preload(
 	"res://agent/memory/MemoryContinuityGuard.gd",
 )
@@ -22,7 +23,7 @@ const PromptTextScript := preload("res://agent/prompt/PromptText.gd")
 static var _prompt_text_cache: Dictionary = {}
 
 var _initialization: Dictionary
-var _store: RefCounted
+var _store: AgentResidentMemoryStore
 var _photo_content_resolver: Object
 var _resident_names: Dictionary = {}
 var _continuity_guard: RefCounted
@@ -31,7 +32,7 @@ var _system_prompt_cache := ""
 
 func _init(
 	initialization: Dictionary,
-	store: RefCounted,
+	store: AgentResidentMemoryStore,
 	photo_content_resolver: Object = null,
 ) -> void:
 	# initialization 为共享只读数据（约定不可变），各组件持引用不再各存深拷贝。
@@ -87,7 +88,14 @@ func build_retry_request(
 	var fields: Array = validation.get("overflow_fields", [])
 	var limits := _store.call("capacity") as Dictionary
 	var feedback := ""
-	if bool(validation.get("continuity_failure", false)):
+	if bool(validation.get("reflection_failure", false)):
+		feedback = (
+			"上次输出的自身脆弱性反思缺少真实来源或格式不合法。"
+			+ "只有近期证据足以支持本人反复失败、偏离或能力限制时才写反思，"
+			+ "并且只能引用输入中明确给出的来源编号；否则返回 null。"
+			+ "\n问题：%s"
+		) % "；".join(validation.get("errors", []))
+	elif bool(validation.get("continuity_failure", false)):
 		feedback = (
 			"上次输出破坏了既有记忆连续性。请根据旧记忆和世界证据修正，"
 			+ "没有世界确认时必须保留原关系和未完成事项。"
@@ -114,9 +122,25 @@ func validate_candidate(
 	old_memory: Dictionary = {},
 	evidence_items: Array = [],
 ) -> Dictionary:
-	var validation := _store.call("validate", candidate) as Dictionary
+	if typeof(candidate) != TYPE_DICTIONARY:
+		return _store.call("validate", candidate) as Dictionary
+	var payload := (candidate as Dictionary).duplicate(true)
+	var reflection_supplied := payload.has(REFLECTION_FIELD)
+	var reflection_value: Variant = payload.get(REFLECTION_FIELD)
+	payload.erase(REFLECTION_FIELD)
+	var validation := _store.validate(payload)
 	if not bool(validation.get("ok", false)):
 		return validation
+	var reflection_validation := _validate_reflection(
+		reflection_value,
+		evidence_items,
+		reflection_supplied,
+	)
+	if not bool(reflection_validation.get("ok", false)):
+		return reflection_validation
+	validation["reflection"] = (
+		reflection_validation.get("reflection", {}) as Dictionary
+	).duplicate(true)
 	if old_memory.is_empty():
 		return validation
 	var continuity := _continuity_guard.call(
@@ -128,6 +152,87 @@ func validate_candidate(
 	if not bool(continuity.get("ok", false)):
 		return continuity
 	return validation
+
+
+func _validate_reflection(
+	value: Variant,
+	evidence_items: Array,
+	supplied: bool,
+) -> Dictionary:
+	if not supplied or typeof(value) == TYPE_NIL:
+		return {"ok": true, "reflection": {}}
+	if typeof(value) != TYPE_DICTIONARY:
+		return _reflection_failure("自身脆弱性反思必须是对象或 null")
+	var reflection := value as Dictionary
+	if (
+		reflection.size() != 2
+		or not reflection.has("text")
+		or not reflection.has("evidence_refs")
+	):
+		return _reflection_failure("自身脆弱性反思字段必须精确包含 text 和 evidence_refs")
+	var text := String(reflection.get("text", "")).strip_edges()
+	if typeof(reflection.get("text")) != TYPE_STRING or text.is_empty() or text.length() > 480:
+		return _reflection_failure("自身脆弱性反思 text 必须是 1 至 480 字符的文本")
+	if typeof(reflection.get("evidence_refs")) != TYPE_ARRAY:
+		return _reflection_failure("自身脆弱性反思 evidence_refs 必须是数组")
+	var known_refs := _evidence_source_refs(evidence_items)
+	var refs: Array[String] = []
+	for ref_value: Variant in reflection.get("evidence_refs", []) as Array:
+		if typeof(ref_value) != TYPE_STRING:
+			return _reflection_failure("自身脆弱性反思包含非文本来源编号")
+		var source_ref := String(ref_value).strip_edges()
+		if source_ref.is_empty() or refs.has(source_ref) or not known_refs.has(source_ref):
+			return _reflection_failure("自身脆弱性反思引用了未知、空白或重复来源：%s" % source_ref)
+		refs.append(source_ref)
+	if refs.is_empty() or refs.size() > 8:
+		return _reflection_failure("自身脆弱性反思必须引用 1 至 8 个近期证据来源")
+	return {
+		"ok": true,
+		"reflection": {
+			"text": text,
+			"evidence_refs": refs,
+		},
+	}
+
+
+func _evidence_source_refs(items: Array) -> Dictionary:
+	var result := {}
+	for item_value: Variant in items:
+		if typeof(item_value) != TYPE_DICTIONARY:
+			continue
+		var item := item_value as Dictionary
+		var wake := item.get("wake_packet", {}) as Dictionary
+		for observation_value: Variant in wake.get("runtime_observations", []) as Array:
+			if typeof(observation_value) == TYPE_DICTIONARY:
+				var observation_id := String(
+					(observation_value as Dictionary).get("observation_id", ""),
+				).strip_edges()
+				if not observation_id.is_empty():
+					result["runtime_observation:%s" % observation_id] = true
+		for event_value: Variant in wake.get("events", []) as Array:
+			if typeof(event_value) == TYPE_DICTIONARY:
+				var event_id := String(
+					(event_value as Dictionary).get("event_id", ""),
+				).strip_edges()
+				if not event_id.is_empty():
+					result["event:%s" % event_id] = true
+		for result_value: Variant in wake.get("action_results", []) as Array:
+			if typeof(result_value) == TYPE_DICTIONARY:
+				var action_id := String(
+					(result_value as Dictionary).get("action_id", ""),
+				).strip_edges()
+				if not action_id.is_empty():
+					result["action_result:%s" % action_id] = true
+	return result
+
+
+func _reflection_failure(message: String) -> Dictionary:
+	return {
+		"ok": false,
+		"retryable": true,
+		"reflection_failure": true,
+		"errors": [message],
+	}
 
 
 func _build_system_prompt() -> Dictionary:
@@ -248,8 +353,23 @@ func _render_evidence(items: Array) -> String:
 		lines.append("附近：%s" % (
 			"无" if nearby_names.is_empty() else "、".join(nearby_names)
 		))
+		for observation_value: Variant in wake.get(
+			"runtime_observations",
+			[],
+		) as Array:
+			var observation := observation_value as Dictionary
+			lines.append(
+				"- [来源 runtime_observation:%s] 刚刚注意到：%s" % [
+					_safe(observation.get("observation_id", "")),
+					_safe(observation.get("text", "")),
+				],
+			)
 		for event_value: Variant in wake.get("events", []) as Array:
-			lines.append("- 世界事件：%s" % _render_event(event_value as Dictionary))
+			var event := event_value as Dictionary
+			lines.append("- [来源 event:%s] 世界事件：%s" % [
+				_safe(event.get("event_id", "")),
+				_render_event(event),
+			])
 		var intent_by_id := {}
 		for intent_value: Variant in item.get("matched_intents", []) as Array:
 			var intent := intent_value as Dictionary
@@ -258,7 +378,8 @@ func _render_evidence(items: Array) -> String:
 			var result := result_value as Dictionary
 			var intent := intent_by_id.get(String(result.get("action_id", "")), {}) as Dictionary
 			lines.append("- 原动作意图：%s" % _render_action(intent))
-			lines.append("  世界最终结果（动作ID：%s）：%s；%s；%s" % [
+			lines.append("  世界最终结果（来源 action_result:%s；动作ID：%s）：%s；%s；%s" % [
+				_safe(result.get("action_id", "")),
 				_safe(result.get("action_id", "")),
 				_safe(result.get("status", "")),
 				_safe(result.get("reason", "")),

@@ -14,10 +14,47 @@ var _test_root := "user://tests/agent/resident-evidence-queue/%d_%d" % [
 func _initialize() -> void:
 	_test_evidence_queue_is_resident_private_fifo()
 	_test_evidence_queue_deduplicates_world_sources()
+	_test_runtime_observation_is_deduplicated_evidence()
 	_test_world_revision_stays_integer_across_evidence_json_round_trip()
 	_test_world_result_pairs_with_pending_intention()
 	_test_equal_length_external_rewrite_is_detected()
 	_finish_suite("RESIDENT-EVIDENCE-QUEUE_PASS", [_test_root])
+
+
+func _test_runtime_observation_is_deduplicated_evidence() -> void:
+	var queue: RefCounted = (load(EVIDENCE_QUEUE_PATH) as Script).new(
+		_test_root.path_join("runtime-observation/world_evidence.json"),
+	)
+	var wake := TestData.wake_packet("runtime-observation-wake")
+	wake["events"] = []
+	wake["action_results"] = []
+	wake["runtime_observations"] = [{
+		"observation_id": "runtime-observation-evidence-1",
+		"text": "一楼药柜的纱布库存只剩两份。\n请核实。",
+	}]
+	var first := queue.call("append_wake", wake, []) as Dictionary
+	var duplicate := queue.call("append_wake", wake, []) as Dictionary
+	_expect_equal(first.get("added"), true, "first runtime observation adds evidence")
+	_expect_equal(duplicate.get("added"), false, "runtime observation id is idempotent")
+	var items := (queue.call("read") as Dictionary).get("items", []) as Array
+	_expect_equal(items.size(), 1, "runtime observation creates one private evidence item")
+	if items.size() == 1:
+		var stored_wake := (items[0] as Dictionary).get("wake_packet", {}) as Dictionary
+		var stored := stored_wake.get("runtime_observations", []) as Array
+		_expect_equal(stored.size(), 1, "runtime observation remains a distinct evidence source")
+		if stored.size() == 1:
+			_expect_equal(
+				(stored[0] as Dictionary).get("text"),
+				"一楼药柜的纱布库存只剩两份。\n请核实。",
+				"evidence preserves the exact raw observation text",
+			)
+	var conflict := wake.duplicate(true)
+	conflict["runtime_observations"][0]["text"] = "库存充足。"
+	_expect_equal(
+		(queue.call("append_wake", conflict, []) as Dictionary).get("ok"),
+		false,
+		"same observation id cannot be reused for different content",
+	)
 
 
 func _test_equal_length_external_rewrite_is_detected() -> void:

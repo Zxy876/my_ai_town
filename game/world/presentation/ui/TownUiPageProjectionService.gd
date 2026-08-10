@@ -840,6 +840,35 @@ func _dispatch_resident_detail(
 				0,
 				current_page + (-1 if direction == "previous" else 1),
 			)
+		"resident_detail.observe":
+			if _gateway == null or not _gateway.has_method("queue_runtime_observation"):
+				return _dispatch_failure(
+					"RUNTIME_OBSERVATION_INTERFACE_MISSING",
+					false,
+					request_id,
+				)
+			var observation_request := {
+				"observationId": String(payload.get("observationId", "")),
+				"targetResidentId": resident_id,
+				"text": String(payload.get("text", "")),
+			}
+			var observation_kind := String(payload.get("kind", "")).strip_edges()
+			if not observation_kind.is_empty():
+				observation_request["kind"] = observation_kind
+			var observation_result := _gateway.call(
+				"queue_runtime_observation",
+				observation_request,
+			) as Dictionary
+			if not bool(observation_result.get("ok", false)):
+				_publish_failure(
+					"resident_detail",
+					intent,
+					request_id,
+					submitted_at,
+					observation_result,
+				)
+				return _command_dispatch_result(request_id, observation_result)
+			context["selectedTab"] = "memories"
 		"resident_detail.change_memory":
 			if _gateway == null or not _gateway.has_method("apply_resident_memory_intervention"):
 				return _dispatch_failure("RESIDENT_MEMORY_INTERVENTION_INTERFACE_MISSING", false, request_id)
@@ -2236,6 +2265,11 @@ func _publish_resident_detail(operation: Dictionary, error_value: Variant) -> vo
 		memory_available
 		and memory.has("formal_memories")
 	)
+	var runtime_observation_available := (
+		page_available
+		and _gateway != null
+		and _gateway.has_method("queue_runtime_observation")
+	)
 	var memory_action_disabled_reason := (
 		""
 		if important_memory_available
@@ -2366,6 +2400,7 @@ func _publish_resident_detail(operation: Dictionary, error_value: Variant) -> vo
 			"filterRelationshipPlayer": _action("resident_detail.filter_relationships", relationship_available, "" if relationship_available else "RESIDENT_RELATIONSHIP_NOT_READY", {"residentId": resident_id, "filterId": "player"}),
 			"editMemory": _action("resident_detail.change_memory", important_memory_available, memory_action_disabled_reason, {"residentId": resident_id, "operation": "edit", "expectedRevision": int(memory.get("formal_memory_revision", 0))}),
 			"deleteMemory": _action("resident_detail.change_memory", important_memory_available, memory_action_disabled_reason, {"residentId": resident_id, "operation": "delete", "expectedRevision": int(memory.get("formal_memory_revision", 0))}),
+			"observeRuntime": _action("resident_detail.observe", runtime_observation_available, "" if runtime_observation_available else "RUNTIME_OBSERVATION_INTERFACE_MISSING", {"residentId": resident_id}),
 			"writeMemory": _action("resident_detail.change_memory", important_memory_available, memory_action_disabled_reason, {"residentId": resident_id, "operation": "write", "expectedRevision": int(memory.get("formal_memory_revision", 0))}),
 			"previousMemoryPage": _action("resident_detail.page_memories", page_available and int(content.get("page", 0)) > 0, "FIRST_MEMORY_PAGE", {"residentId": resident_id, "direction": "previous"}),
 			"nextMemoryPage": _action("resident_detail.page_memories", page_available and int(content.get("page", 0)) + 1 < int(content.get("pageCount", 1)), "LAST_MEMORY_PAGE", {"residentId": resident_id, "direction": "next"}),
@@ -2660,6 +2695,8 @@ func _resident_memory_content(
 		var subject := String(entry.get("subject", "")).strip_edges()
 		var interpretation := String(entry.get("interpretation", "")).strip_edges()
 		var related_residents := (entry.get("people", []) as Array).duplicate()
+		var node_kind := String(entry.get("nodeKind", "event"))
+		var source_kind := String(entry.get("sourceKind", ""))
 		all_memory_items.append({
 			"memoryId": String(entry.get("memoryKey", "")),
 			"title": subject,
@@ -2670,8 +2707,12 @@ func _resident_memory_content(
 			"playerInvolved": related_residents.has("玩家") or related_residents.has("player"),
 			"relatedPlaces": (entry.get("places", []) as Array).duplicate(),
 			"relatedResidents": related_residents,
-			"sourceKind": String(entry.get("sourceKind", "")),
-			"sourceLabel": _memory_source_label(String(entry.get("sourceKind", ""))),
+			"sourceKind": source_kind,
+			"sourceLabel": (
+				"自身反思"
+				if node_kind == "reflection"
+				else _memory_source_label(source_kind)
+			),
 			"confidence": int(entry.get("confidence", 0)),
 			"influence": {
 				"available": true,

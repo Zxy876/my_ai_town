@@ -24,6 +24,7 @@ const SERVICE_NOT_CONFIGURED := "SESSION_SAVE_SERVICE_NOT_CONFIGURED"
 var _runtime: Node
 var _world: Object
 var _agent: Object
+var _experiment_source: Object
 var _session_config: Dictionary = {}
 var _store: RefCounted
 var _gate: RefCounted
@@ -53,10 +54,12 @@ func configure(
 	world: Object,
 	agent: Object,
 	session_config: Dictionary,
+	experiment_source: Object = null,
 ) -> Dictionary:
 	_runtime = runtime
 	_world = world
 	_agent = agent
+	_experiment_source = experiment_source
 	_session_config = session_config.duplicate(true)
 	_configuration_error.clear()
 	_last_result.clear()
@@ -74,6 +77,16 @@ func configure(
 	if not agent.has_method("get_save_context"):
 		return _remember_configuration_failure(
 			"SESSION_SAVE_AGENT_PARTICIPANT_MISSING",
+		)
+	if (
+		experiment_source != null
+		and (
+			not is_instance_valid(experiment_source)
+			or not experiment_source.has_method("capture_experiment_state")
+		)
+	):
+		return _remember_configuration_failure(
+			"SESSION_SAVE_EXPERIMENT_PARTICIPANT_MISSING",
 		)
 	if not runtime.has_method("get_resident_identity_snapshot"):
 		return _remember_configuration_failure(
@@ -246,6 +259,10 @@ func create_save(payload: Dictionary = {}) -> Dictionary:
 	var blocker := _save_blocker()
 	if not blocker.is_empty():
 		_last_result = _failure(blocker, false)
+		return _last_result.duplicate(true)
+	var experiment_capture := _capture_experiment_state()
+	if not bool(experiment_capture.get("ok", false)):
+		_last_result = experiment_capture.duplicate(true)
 		return _last_result.duplicate(true)
 	var identities_value: Variant = _session_config.get("residentIdentities")
 	var identities: Array = (
@@ -428,7 +445,26 @@ func _manifest_session_config() -> Dictionary:
 					}
 				saved_bindings.append(saved_binding)
 			filtered["residentBindings"] = saved_bindings
+	if _session_config.has("experimentState"):
+		filtered["experimentState"] = _duplicate_value(
+			_session_config.get("experimentState"),
+		)
 	return filtered
+
+
+func _capture_experiment_state() -> Dictionary:
+	if _experiment_source == null:
+		return {"ok": true, "changed": false}
+	var captured := _experiment_source.call("capture_experiment_state") as Dictionary
+	if (
+		not bool(captured.get("ok", false))
+		or not captured.get("experimentState") is Dictionary
+	):
+		return _failure("SESSION_SAVE_EXPERIMENT_CAPTURE_FAILED", false)
+	_session_config["experimentState"] = (
+		captured.get("experimentState", {}) as Dictionary
+	).duplicate(true)
+	return {"ok": true, "changed": true}
 
 
 func _formal_world_ready() -> bool:

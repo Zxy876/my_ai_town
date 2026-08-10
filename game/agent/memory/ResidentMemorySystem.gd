@@ -56,7 +56,7 @@ var _store: AgentResidentMemoryStore
 var _evidence_queue: RefCounted
 var _memory_entry_store: RefCounted
 var _memory_intervention_store: RefCounted
-var _formal_memory_builder: RefCounted
+var _formal_memory_builder: AgentResidentFormalMemoryBuilder
 var _memory_intervention_service: RefCounted
 var _memory_summary_projector: RefCounted
 var _memory_aging_service: RefCounted
@@ -138,10 +138,17 @@ func prepare_context(wake_packet: Dictionary) -> Dictionary:
 	var ingestion := _ingest_wake(wake_packet)
 	if not bool(ingestion.get("ok", false)):
 		return _remember_failure(ingestion)
-	var context := _context_result(
-		wake_packet,
+	var perception_result := _persist_perceived_memories(
+		ingestion.get("items", []) as Array,
 		aging_result.get("formal_memory_archive", {}) as Dictionary,
 		aging_result.get("memory_interventions", {}) as Dictionary,
+	)
+	if not bool(perception_result.get("ok", false)):
+		return _remember_failure(perception_result)
+	var context := _context_result(
+		wake_packet,
+		perception_result.get("formal_memory_archive", {}) as Dictionary,
+		perception_result.get("memory_interventions", {}) as Dictionary,
 	)
 	var response := {
 		"ok": true,
@@ -292,6 +299,16 @@ func accept_organization(token_value: Variant, candidate: Variant) -> Dictionary
 	) as Dictionary
 	if not bool(formal_result.get("ok", false)):
 		return _organization_failure(formal_result, true)
+	var reflection := validation.get("reflection", {}) as Dictionary
+	if not reflection.is_empty():
+		formal_result = _formal_memory_builder.add_reflection(
+			formal_result.get("archive", {}) as Dictionary,
+			formal_result.get("intervention_log", {}) as Dictionary,
+			reflection,
+			_latest_evidence_time(context.get("evidence_items", []) as Array),
+		) as Dictionary
+		if not bool(formal_result.get("ok", false)):
+			return _organization_failure(formal_result, true)
 	var archive_validation := _memory_entry_store.call(
 		"validate",
 		formal_result["archive"],
@@ -633,6 +650,30 @@ func get_read_only_memory() -> Dictionary:
 	}
 
 
+func find_formal_memory_by_evidence_ref(evidence_ref: String) -> Dictionary:
+	var normalized := evidence_ref.strip_edges()
+	if normalized.is_empty():
+		return {"ok": false, "errors": ["正式记忆证据引用无效"]}
+	var entry_result := _memory_entry_store.call("read") as Dictionary
+	if not bool(entry_result.get("ok", false)):
+		return entry_result
+	for entry_value: Variant in (
+		(entry_result.get("archive", {}) as Dictionary).get("entries", []) as Array
+	):
+		if not entry_value is Dictionary:
+			continue
+		var entry := entry_value as Dictionary
+		if not (entry.get("evidence_refs", []) as Array).has(normalized):
+			continue
+		return {
+			"ok": true,
+			"found": true,
+			"memoryId": String(entry.get("memory_id", "")),
+			"claimRootId": String(entry.get("claim_root_id", "")),
+		}
+	return {"ok": true, "found": false}
+
+
 func find_expressed_memory_claim(spoken_text: String) -> Dictionary:
 	var normalized_spoken := _claim_text(spoken_text)
 	if normalized_spoken.length() < 4:
@@ -783,6 +824,7 @@ func _public_formal_memories(value: Variant) -> Array[Dictionary]:
 		if typeof(entry_value) != TYPE_DICTIONARY:
 			continue
 		var entry := entry_value as Dictionary
+		var claim_root_id := String(entry.get("claim_root_id", ""))
 		result.append({
 			"memoryKey": String(entry.get("memory_id", "")),
 			"subject": _player_visible_text(entry.get("subject", "")),
@@ -794,6 +836,7 @@ func _public_formal_memories(value: Variant) -> Array[Dictionary]:
 			"topics": (entry.get("topics", []) as Array).duplicate(),
 			"worldTime": (entry.get("world_time", {}) as Dictionary).duplicate(true),
 			"sourceKind": String(entry.get("source_kind", "")),
+			"nodeKind": "reflection" if claim_root_id.begins_with("reflection:") else "event",
 			"confidence": int(entry.get("confidence", 0)),
 			"state": String(entry.get("state", "past")),
 		})
@@ -1425,6 +1468,73 @@ func _ingest_wake(wake_packet: Dictionary) -> Dictionary:
 	return append_result
 
 
+func _persist_perceived_memories(
+	evidence_items: Array,
+	archive_snapshot: Dictionary,
+	intervention_snapshot: Dictionary,
+) -> Dictionary:
+	var formal_result := _formal_memory_builder.build(
+		archive_snapshot,
+		intervention_snapshot,
+		evidence_items,
+		_store.empty_memory(),
+	)
+	if not bool(formal_result.get("ok", false)):
+		return formal_result
+	if not bool(formal_result.get("changed", false)):
+		return {
+			"ok": true,
+			"changed": false,
+			"formal_memory_archive": archive_snapshot.duplicate(true),
+			"memory_interventions": intervention_snapshot.duplicate(true),
+		}
+	var archive_validation := _memory_entry_store.call(
+		"validate",
+		formal_result.get("archive"),
+	) as Dictionary
+	if not bool(archive_validation.get("ok", false)):
+		return archive_validation
+	var log_validation := _memory_intervention_store.call(
+		"validate",
+		formal_result.get("intervention_log"),
+	) as Dictionary
+	if not bool(log_validation.get("ok", false)):
+		return log_validation
+	var archive_write := _memory_entry_store.call(
+		"replace",
+		archive_validation["archive"],
+	) as Dictionary
+	if not bool(archive_write.get("ok", false)):
+		return archive_write
+	var log_write := _memory_intervention_store.call(
+		"replace",
+		log_validation["log"],
+	) as Dictionary
+	if not bool(log_write.get("ok", false)):
+		var archive_rollback := _memory_entry_store.call(
+			"replace",
+			archive_snapshot,
+		) as Dictionary
+		return _combined_failure(log_write, [archive_rollback])
+	_last_update = {
+		"status": "perceptions_stored",
+		"formal_memory_revision": int(
+			(archive_write.get("archive", {}) as Dictionary).get("revision", 0),
+		),
+		"persisted_entries": [],
+	}
+	return {
+		"ok": true,
+		"changed": true,
+		"formal_memory_archive": (
+			archive_write.get("archive", {}) as Dictionary
+		).duplicate(true),
+		"memory_interventions": (
+			log_write.get("log", {}) as Dictionary
+		).duplicate(true),
+	}
+
+
 func _is_continuity_action_id(action_id: String) -> bool:
 	# These actions are created and completed by World while continuing an
 	# already-submitted service, performance or conversation promise. They are
@@ -1543,6 +1653,16 @@ func _select_decision_memory(
 			subject_anchors,
 			conversation_data.get("turns", []) as Array,
 		)
+	for observation_value: Variant in wake_packet.get(
+		"runtime_observations",
+		[],
+	) as Array:
+		if typeof(observation_value) == TYPE_DICTIONARY:
+			_append_context_text(
+				person_anchors,
+				subject_anchors,
+				(observation_value as Dictionary).get("text"),
+			)
 	for event_value: Variant in wake_packet.get("events", []) as Array:
 		var event := event_value as Dictionary
 		_append_anchor(person_anchors, event.get("who_resident_id"))
@@ -1907,6 +2027,12 @@ func _formal_memory_relevance(
 	subject_anchors: Array[String],
 ) -> int:
 	var score := 0
+	if (
+		String(entry.get("claim_root_id", "")).begins_with("reflection:")
+		and String(entry.get("state", "")) in ["influencing", "doubtful", "anomalous"]
+	):
+		# 自身脆弱性是跨场景的决策条件，不依赖当前地点或人物命中。
+		score += 45
 	for person_value: Variant in entry.get("people", []) as Array:
 		if _value_matches_anchors(String(person_value), person_anchors):
 			score += 120
@@ -2108,6 +2234,19 @@ func _wake_day(wake_packet: Dictionary) -> int:
 	var snapshot := wake_packet.get("snapshot", {}) as Dictionary
 	var time := snapshot.get("time", {}) as Dictionary
 	return int(time.get("day", 0))
+
+
+func _latest_evidence_time(items: Array) -> Dictionary:
+	var latest := {"day": 1, "clock": "00:00", "period": "清晨"}
+	for item_value: Variant in items:
+		if typeof(item_value) != TYPE_DICTIONARY:
+			continue
+		var wake := (item_value as Dictionary).get("wake_packet", {}) as Dictionary
+		var snapshot := wake.get("snapshot", {}) as Dictionary
+		var time_value: Variant = snapshot.get("time")
+		if typeof(time_value) == TYPE_DICTIONARY:
+			latest = (time_value as Dictionary).duplicate(true)
+	return latest
 
 
 func _memory_digest(value: Dictionary) -> String:

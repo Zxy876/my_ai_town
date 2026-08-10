@@ -466,6 +466,10 @@ func get_read_only_memory() -> Dictionary:
 	return _memory_system.get_read_only_memory()
 
 
+func find_formal_memory_by_evidence_ref(evidence_ref: String) -> Dictionary:
+	return _memory_system.find_formal_memory_by_evidence_ref(evidence_ref)
+
+
 func find_expressed_memory_claim(spoken_text: String) -> Dictionary:
 	return _memory_system.call("find_expressed_memory_claim", spoken_text)
 

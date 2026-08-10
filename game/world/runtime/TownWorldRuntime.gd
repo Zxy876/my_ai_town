@@ -11569,14 +11569,19 @@ func person_name_for_id(person_id: String) -> String:
 func player_avatar_id() -> String:
 	return _player_avatar_id()
 
-
 func queue_world_event(resident_name: String, source: Dictionary) -> Dictionary:
 	return _queue_world_event(resident_name, source)
 
+func request_runtime_observation_wake(resident_ref: String) -> Dictionary:
+	var resident_id := _resident_key(resident_ref)
+	if not _running: return {"ok": false, "errorCode": "WORLD_NOT_RUNNING", "retryable": false}
+	if resident_id.is_empty() or not _resident_is_present(_residents.get(resident_id, {}) as Dictionary): return {"ok": false, "errorCode": "RUNTIME_OBSERVATION_TARGET_UNAVAILABLE", "retryable": false}
+	if bool((_residents[resident_id] as Dictionary).get("decisionPending", false)): return {"ok": true, "scheduled": false, "decisionId": String((_residents[resident_id] as Dictionary).get("validDecisionId", ""))}
+	_schedule_decision(resident_id, false, false, false, false, true)
+	return {"ok": true, "scheduled": bool((_residents[resident_id] as Dictionary).get("decisionPending", false)), "decisionId": String((_residents[resident_id] as Dictionary).get("validDecisionId", ""))}
 
 func bump_world_revision(notify := true) -> void:
 	_bump_world_revision(notify)
-
 
 func _resident_is_present(resident: Dictionary) -> bool:
 	var resident_id := String(resident.get("residentId", "")).strip_edges()

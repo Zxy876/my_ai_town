@@ -785,6 +785,18 @@ func get_resident_memory(resident_id: String) -> Dictionary:
 	return _residents[resident_id].call("get_read_only_memory")
 
 
+func find_resident_formal_memory_by_evidence_ref(
+	resident_id: String,
+	evidence_ref: String,
+) -> Dictionary:
+	if not _session_open:
+		return {"ok": false, "errors": ["Agent 会话已关闭"]}
+	if not _residents.has(resident_id):
+		return {"ok": false, "errors": ["居民 %s 尚未初始化" % resident_id]}
+	var resident := _residents[resident_id] as AgentResidentRuntime
+	return resident.find_formal_memory_by_evidence_ref(evidence_ref)
+
+
 func apply_resident_memory_intervention(
 	resident_id: String,
 	request: Variant,

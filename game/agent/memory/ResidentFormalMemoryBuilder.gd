@@ -9,16 +9,17 @@ const MAX_FORMAL_ENTRIES := 256
 const PROTECTED_MEMORY_STATES: Array[String] = [
 	"influencing", "doubtful", "anomalous", "corrected",
 ]
-const MEANINGFUL_EVENT_TYPES: Array[String] = [
+const COGNITIVE_EVENT_TYPES: Array[String] = [
 	"搭话", "旁听", "对方答话", "对话结束", "公告发布", "公告阅读",
 	"公告转告", "钟声公告", "正式通知送达", "营业状态变化",
-	"身体状况变化", "天气变了", "冲突见闻",
+	"身体状况变化", "承诺条件变化", "天气变了", "冲突见闻",
+	"有人来了", "有人走了",
 	"居民死亡",
 ]
 
 var _resident_id: String
-var _matcher: RefCounted = MatcherScript.new()
-var _reappraiser: RefCounted = ReappraiserScript.new()
+var _matcher: AgentResidentMemoryEvidenceMatcher = MatcherScript.new()
+var _reappraiser: AgentResidentMemoryReappraiser = ReappraiserScript.new()
 
 
 func _init(resident_id: String) -> void:
@@ -34,19 +35,48 @@ func build(
 	var revision := maxi(int(old_archive.get("revision", 0)), int(old_log.get("revision", 0))) + 1
 	var entries := (old_archive.get("entries", []) as Array).duplicate(true)
 	var interventions := (old_log.get("interventions", []) as Array).duplicate(true)
+	var changed := false
 	for evidence_item_value: Variant in evidence_items:
 		if typeof(evidence_item_value) != TYPE_DICTIONARY:
 			continue
 		var evidence_item := evidence_item_value as Dictionary
 		var wake := evidence_item.get("wake_packet", {}) as Dictionary
+		for observation_value: Variant in wake.get(
+			"runtime_observations",
+			[],
+		) as Array:
+			if typeof(observation_value) != TYPE_DICTIONARY:
+				continue
+			var observation_evidence := _runtime_observation_evidence(
+				observation_value as Dictionary,
+				wake,
+			)
+			if not observation_evidence.is_empty():
+				changed = (
+					_merge_evidence(
+						entries,
+						interventions,
+						observation_evidence,
+						revision,
+					)
+					or changed
+				)
 		for event_value: Variant in wake.get("events", []) as Array:
 			if typeof(event_value) != TYPE_DICTIONARY:
 				continue
 			var event := event_value as Dictionary
-			if String(event.get("type", "")) not in MEANINGFUL_EVENT_TYPES:
+			if String(event.get("type", "")) not in COGNITIVE_EVENT_TYPES:
 				continue
 			for evidence in _event_evidence(event, working_summary):
-				_merge_evidence(entries, interventions, evidence, revision)
+				changed = (
+					_merge_evidence(
+						entries,
+						interventions,
+						evidence,
+						revision,
+					)
+					or changed
+				)
 		var intents := evidence_item.get("matched_intents", []) as Array
 		var intent_by_id := {}
 		for intent_value: Variant in intents:
@@ -59,18 +89,30 @@ func build(
 			var action_result := result_value as Dictionary
 			var action_id := String(action_result.get("action_id", ""))
 			var intent := intent_by_id.get(action_id, {}) as Dictionary
-			_merge_evidence(
-				entries,
-				interventions,
-				_action_evidence(action_result, intent, wake, working_summary),
-				revision,
+			changed = (
+				_merge_evidence(
+					entries,
+					interventions,
+					_action_evidence(action_result, intent, wake, working_summary),
+					revision,
+				)
+				or changed
 			)
+	if not changed:
+		return {
+			"ok": true,
+			"changed": false,
+			"convergence": {"removed_memory_ids": []},
+			"archive": old_archive.duplicate(true),
+			"intervention_log": old_log.duplicate(true),
+		}
 	var convergence := _converge_entries(entries, interventions)
 	if not bool(convergence.get("ok", false)):
 		return convergence
 	entries = (convergence.get("entries", []) as Array).duplicate(true)
 	return {
 		"ok": true,
+		"changed": true,
 		"convergence": {
 			"removed_memory_ids": (
 				convergence.get("removed_memory_ids", []) as Array
@@ -81,6 +123,97 @@ func build(
 			"resident_id": _resident_id,
 			"revision": revision,
 			"entries": entries,
+		},
+		"intervention_log": {
+			"state_version": int(old_log.get("state_version", 1)),
+			"resident_id": _resident_id,
+			"revision": revision,
+			"interventions": interventions,
+		},
+	}
+
+
+func add_reflection(
+	old_archive: Dictionary,
+	old_log: Dictionary,
+	reflection: Dictionary,
+	world_time: Variant,
+) -> Dictionary:
+	var text := String(reflection.get("text", "")).strip_edges()
+	var evidence_refs: Array = (
+		reflection.get("evidence_refs", []) as Array
+	).duplicate()
+	if text.is_empty() or evidence_refs.is_empty():
+		return {
+			"ok": true,
+			"changed": false,
+			"convergence": {"removed_memory_ids": []},
+			"archive": old_archive.duplicate(true),
+			"intervention_log": old_log.duplicate(true),
+		}
+	var stable_refs: Array[String] = []
+	for source_ref_value: Variant in evidence_refs:
+		var source_ref := String(source_ref_value).strip_edges()
+		if not source_ref.is_empty() and not stable_refs.has(source_ref):
+			stable_refs.append(source_ref)
+	stable_refs.sort()
+	var claim_root := "reflection:%s" % String(
+		AgentJsonScript.content_sha256({
+			"resident_id": _resident_id,
+			"evidence_refs": stable_refs,
+		})
+	).left(20)
+	var revision := maxi(
+		int(old_archive.get("revision", 0)),
+		int(old_log.get("revision", 0)),
+	) + 1
+	var entries := (old_archive.get("entries", []) as Array).duplicate(true)
+	var interventions := (old_log.get("interventions", []) as Array).duplicate(true)
+	var reflection_evidence := _evidence_record(
+		text,
+		text,
+		[],
+		[],
+		_topics(text),
+		world_time,
+		"firsthand",
+		"",
+		claim_root,
+		stable_refs,
+	)
+	reflection_evidence["initial_confidence"] = 70
+	var changed := _merge_evidence(
+		entries,
+		interventions,
+		reflection_evidence,
+		revision,
+	)
+	if not changed:
+		return {
+			"ok": true,
+			"changed": false,
+			"convergence": {"removed_memory_ids": []},
+			"archive": old_archive.duplicate(true),
+			"intervention_log": old_log.duplicate(true),
+		}
+	var convergence := _converge_entries(entries, interventions)
+	if not bool(convergence.get("ok", false)):
+		return convergence
+	return {
+		"ok": true,
+		"changed": true,
+		"convergence": {
+			"removed_memory_ids": (
+				convergence.get("removed_memory_ids", []) as Array
+			).duplicate(),
+		},
+		"archive": {
+			"state_version": int(old_archive.get("state_version", 1)),
+			"resident_id": _resident_id,
+			"revision": revision,
+			"entries": (
+				convergence.get("entries", []) as Array
+			).duplicate(true),
 		},
 		"intervention_log": {
 			"state_version": int(old_log.get("state_version", 1)),
@@ -133,6 +266,7 @@ func _oldest_settled_memory_index(entries: Array, interventions: Array) -> int:
 			state in PROTECTED_MEMORY_STATES
 			or state != "past"
 			or intervention_memory_ids.has(memory_id)
+			or _is_scenario_u0_entry(entry)
 		):
 			continue
 		var revision := int(entry.get(
@@ -143,6 +277,15 @@ func _oldest_settled_memory_index(entries: Array, interventions: Array) -> int:
 			best_index = index
 			best_revision = revision
 	return best_index
+
+
+func _is_scenario_u0_entry(entry: Dictionary) -> bool:
+	for evidence_ref_value: Variant in entry.get("evidence_refs", []) as Array:
+		if String(evidence_ref_value).begins_with(
+			"runtime_observation:scenario-u0-"
+		):
+			return true
+	return false
 
 
 func _protected_intervention_memory_ids(interventions: Array) -> Dictionary:
@@ -165,6 +308,32 @@ func _is_automatic_settlement_record(intervention: Dictionary) -> bool:
 		and String(intervention.get("kind", "")) == "soften"
 		and String(intervention.get("status", "")) == "superseded"
 		and String(intervention.get("player_text", "")).is_empty()
+	)
+
+
+func _runtime_observation_evidence(
+	observation: Dictionary,
+	wake: Dictionary,
+) -> Dictionary:
+	var observation_id := String(
+		observation.get("observation_id", ""),
+	).strip_edges()
+	var text := String(observation.get("text", "")).strip_edges()
+	if observation_id.is_empty() or text.is_empty():
+		return {}
+	var source_ref := "runtime_observation:%s" % observation_id
+	var snapshot := wake.get("snapshot", {}) as Dictionary
+	return _evidence_record(
+		text,
+		text,
+		[],
+		[],
+		_topics(text),
+		snapshot.get("time", {}),
+		"firsthand",
+		"",
+		source_ref,
+		[source_ref],
 	)
 
 
@@ -299,10 +468,38 @@ func _event_evidence(event: Dictionary, summary: Dictionary) -> Array[Dictionary
 			evidence_refs,
 		))
 		return result
+	if event_type in ["有人来了", "有人走了"]:
+		var who := String(event.get("who", "")).strip_edges()
+		var who_resident_id := String(
+			event.get("who_resident_id", ""),
+		).strip_edges()
+		if who.is_empty():
+			return result
+		var movement_subject := "%s%s" % [
+			who,
+			"来到我附近。" if event_type == "有人来了" else "离开了我附近。",
+		]
+		var movement_evidence := _evidence_record(
+			movement_subject,
+			movement_subject,
+			[who_resident_id] if not who_resident_id.is_empty() else [],
+			[],
+			_topics("%s %s" % [who, event_type]),
+			event.get("time", {}),
+			"firsthand",
+			"",
+			source_ref,
+			[source_ref],
+		)
+		# 到来/离开是认知事件，但不应长期占据“正在影响”队列。
+		movement_evidence["initial_state"] = "past"
+		result.append(movement_evidence)
+		return result
 	var subject := _event_subject(event)
 	if not subject.is_empty():
 		var people: Array = []
 		for field: String in [
+			"who_resident_id",
 			"speaker_resident_id",
 			"publisher_resident_id",
 			"deceased_resident_id",
@@ -366,7 +563,12 @@ func _action_evidence(
 	)
 
 
-func _merge_evidence(entries: Array, interventions: Array, evidence: Dictionary, revision: int) -> void:
+func _merge_evidence(
+	entries: Array,
+	interventions: Array,
+	evidence: Dictionary,
+	revision: int,
+) -> bool:
 	var candidates: Array[int] = _matcher.call("find_candidate_indices", entries, evidence)
 	var exact_index := -1
 	for index: int in candidates:
@@ -380,25 +582,61 @@ func _merge_evidence(entries: Array, interventions: Array, evidence: Dictionary,
 			break
 	if exact_index >= 0:
 		var exact := entries[exact_index] as Dictionary
+		if not _has_new_evidence_ref(exact, evidence):
+			# 同一组证据只允许形成一次高阶反思；模型换一种措辞不构成
+			# 新证据，也不能借此重复增信或改写已经用于决策的认知节点。
+			if String(exact.get("claim_root_id", "")).begins_with("reflection:"):
+				return false
+			if String(exact.get("subject", "")) != String(evidence.get("subject", "")):
+				var active := _active_intervention(
+					interventions,
+					String(exact.get("memory_id", "")),
+				)
+				var outcome := String(
+					_reappraiser.compare(exact, evidence, active >= 0),
+				)
+				if outcome != "keep":
+					entries[exact_index] = _reappraiser.apply_result(
+						exact,
+						evidence,
+						outcome,
+						revision,
+					)
+					if outcome in ["discover_anomaly", "correct"] and active >= 0:
+						var intervention := (
+							interventions[active] as Dictionary
+						).duplicate(true)
+						intervention["status"] = (
+							"discovered" if outcome == "discover_anomaly" else "corrected"
+						)
+						interventions[active] = intervention
+					return true
+			return _enrich_existing_interpretation(
+				entries,
+				interventions,
+				exact_index,
+				evidence,
+				revision,
+			)
 		var active := _active_intervention(interventions, String(exact.get("memory_id", "")))
-		var outcome := String(_reappraiser.call("compare", exact, evidence, active >= 0))
-		entries[exact_index] = _reappraiser.call("apply_result", exact, evidence, outcome, revision)
+		var outcome := String(_reappraiser.compare(exact, evidence, active >= 0))
+		entries[exact_index] = _reappraiser.apply_result(exact, evidence, outcome, revision)
 		if outcome in ["discover_anomaly", "correct"] and active >= 0:
 			var intervention := (interventions[active] as Dictionary).duplicate(true)
 			intervention["status"] = "discovered" if outcome == "discover_anomaly" else "corrected"
 			interventions[active] = intervention
-		return
+		return true
 	for index: int in candidates:
 		var candidate := entries[index] as Dictionary
 		var active := _active_intervention(interventions, String(candidate.get("memory_id", "")))
-		var outcome := String(_reappraiser.call("compare", candidate, evidence, active >= 0))
+		var outcome := String(_reappraiser.compare(candidate, evidence, active >= 0))
 		if outcome != "keep":
-			entries[index] = _reappraiser.call("apply_result", candidate, evidence, outcome, revision)
+			entries[index] = _reappraiser.apply_result(candidate, evidence, outcome, revision)
 			if outcome in ["discover_anomaly", "correct"] and active >= 0:
 				var intervention := (interventions[active] as Dictionary).duplicate(true)
 				intervention["status"] = "discovered" if outcome == "discover_anomaly" else "corrected"
 				interventions[active] = intervention
-			return
+			return true
 	var memory_id := "memory-%s" % String(AgentJsonScript.content_sha256({
 		"resident_id": _resident_id,
 		"claim_root_id": evidence.get("claim_root_id", ""),
@@ -406,14 +644,58 @@ func _merge_evidence(entries: Array, interventions: Array, evidence: Dictionary,
 		"source_resident_id": evidence.get("source_resident_id", ""),
 	})).left(20)
 	var created := evidence.duplicate(true)
+	var initial_state := String(created.get("initial_state", "influencing"))
+	var initial_confidence := int(created.get(
+		"initial_confidence",
+		78 if String(evidence.get("source_kind", "")) == "firsthand" else 58,
+	))
+	created.erase("initial_state")
+	created.erase("initial_confidence")
 	created["memory_id"] = memory_id
 	created["resident_id"] = _resident_id
-	created["confidence"] = 78 if String(evidence.get("source_kind", "")) == "firsthand" else 58
-	created["state"] = "influencing"
+	created["confidence"] = clampi(initial_confidence, 0, 100)
+	created["state"] = initial_state
 	created["active_version_id"] = "%s-v1" % memory_id
 	created["created_revision"] = revision
 	created["updated_revision"] = revision
 	entries.append(created)
+	return true
+
+
+func _has_new_evidence_ref(entry: Dictionary, evidence: Dictionary) -> bool:
+	var existing := entry.get("evidence_refs", []) as Array
+	for source_ref: Variant in evidence.get("evidence_refs", []) as Array:
+		if not existing.has(source_ref):
+			return true
+	return false
+
+
+func _enrich_existing_interpretation(
+	entries: Array,
+	interventions: Array,
+	index: int,
+	evidence: Dictionary,
+	revision: int,
+) -> bool:
+	var entry := entries[index] as Dictionary
+	var memory_id := String(entry.get("memory_id", ""))
+	var incoming := String(evidence.get("interpretation", "")).strip_edges()
+	var subject := String(evidence.get("subject", "")).strip_edges()
+	if (
+		incoming.is_empty()
+		or incoming == subject
+		or incoming == String(entry.get("interpretation", "")).strip_edges()
+		or subject != String(entry.get("subject", "")).strip_edges()
+		or String(entry.get("state", "")) in ["anomalous", "corrected"]
+		or _active_intervention(interventions, memory_id) >= 0
+	):
+		return false
+	var changed := entry.duplicate(true)
+	changed["interpretation"] = incoming.left(480)
+	changed["active_version_id"] = "%s-v%d" % [memory_id, revision]
+	changed["updated_revision"] = revision
+	entries[index] = changed
+	return true
 
 
 func _evidence_record(
@@ -447,6 +729,8 @@ func _event_subject(event: Dictionary) -> String:
 		"公告发布", "公告阅读", "公告转告", "钟声公告", "正式通知送达":
 			return String(event.get("text", "")).strip_edges()
 		"营业状态变化":
+			return String(event.get("summary", "")).strip_edges()
+		"承诺条件变化":
 			return String(event.get("summary", "")).strip_edges()
 		"身体状况变化":
 			return "身体状况：%s" % String(event.get("label", "")).strip_edges()

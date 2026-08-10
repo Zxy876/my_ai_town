@@ -368,6 +368,11 @@ func _on_entry_availability(result: Dictionary, request_id: String) -> void:
 			"formalReady": formal_ready,
 			"internalPlaytest": internal_playtest,
 			"internalLivePlaytest": internal_live_playtest,
+			"experimentScenario": (
+				(options.get("experimentScenario", {}) as Dictionary).duplicate(true)
+				if options.get("experimentScenario") is Dictionary
+				else options.get("experimentScenario")
+			),
 		},
 		provider_service,
 		options.get("requestHost") as Node,

@@ -6,6 +6,7 @@ signal intent_requested(intent: String, payload: Dictionary)
 signal action_dispatch_started(intent: String, payload: Dictionary)
 signal action_blocked(intent: String, reason: String)
 signal back_requested(revision: int)
+signal initial_intention_requested(payload: Dictionary)
 
 
 const UI_SIGNALS := preload(
@@ -32,6 +33,7 @@ const SLOT_COUNT := 15
 const PROVIDER_AUTO_REFRESH_INTERVAL_SECONDS := 0.75
 const PROVIDER_AUTO_REFRESH_MAX_ATTEMPTS := 20
 const PROVIDER_AUTO_REFRESH_EXHAUSTED_MESSAGE := "模型连接检查超时，请手动刷新重试。"
+const INITIAL_INTENTION_MAX_CHARS := 2000
 const REQUIRED_DATA_FIELDS: Array[String] = [
 	"capabilityMode",
 	"source",
@@ -89,12 +91,14 @@ var _provider_auto_refresh_attempts := 0
 var _provider_auto_refresh_dispatching := false
 var _provider_auto_refresh_exhausted := false
 var _completion_modal_open := false
+var _initial_intention_modal_open := false
+var _initial_intention_scenario: Dictionary = {}
 var _layout_queued := false
 
 var _page_scroll: ScrollContainer
 var _native_root: Control
 var _composite_host: CenterContainer
-var _composite_desktop: Control
+var _composite_desktop: CompositeDesktop
 var _page_panel: PanelContainer
 var _page_content: VBoxContainer
 var _header_top: BoxContainer
@@ -116,6 +120,7 @@ var _model_source_detail: Label
 var _mode_button: Button
 var _back_button: Button
 var _refresh_button: Button
+var _initial_intention_button: Button
 var _assign_button: Button
 var _apply_button: Button
 var _selected_count_label: Label
@@ -132,8 +137,17 @@ var _contract_label: Label
 var _native_modal_backdrop: ColorRect
 var _native_modal_panel: PanelContainer
 var _native_modal_body: Label
+var _native_modal_initial_intention_button: Button
 var _native_modal_return_button: Button
 var _native_modal_start_button: Button
+var _initial_intention_backdrop: ColorRect
+var _initial_intention_panel: PanelContainer
+var _initial_intention_edit: TextEdit
+var _initial_intention_counter: Label
+var _initial_intention_error: Label
+var _initial_intention_clear_button: Button
+var _initial_intention_cancel_button: Button
+var _initial_intention_save_button: Button
 var _exit_confirmation: FormalDialog
 
 
@@ -142,6 +156,7 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	theme = PageTheme.create()
 	_build_interface()
+	_build_initial_intention_modal()
 	_build_exit_confirmation()
 	_build_provider_auto_refresh_timer()
 	resized.connect(_queue_responsive_layout)
@@ -156,6 +171,10 @@ func _ready() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
+		if _initial_intention_modal_open:
+			_close_initial_intention_modal()
+			get_viewport().set_input_as_handled()
+			return
 		request_back()
 		get_viewport().set_input_as_handled()
 
@@ -203,6 +222,9 @@ func bind_town_ui_adapter(adapter: Object) -> void:
 	_revision = -1
 	_contract_error = ""
 	_completion_modal_open = false
+	_initial_intention_modal_open = false
+	if _initial_intention_backdrop != null:
+		_initial_intention_backdrop.visible = false
 	_reset_provider_auto_refresh()
 	if _adapter != null and _adapter.has_signal("view_model_changed"):
 		_adapter.connect(
@@ -227,6 +249,9 @@ func unbind_town_ui_adapter() -> void:
 	_revision = -1
 	_contract_error = ""
 	_completion_modal_open = false
+	_initial_intention_modal_open = false
+	if _initial_intention_backdrop != null:
+		_initial_intention_backdrop.visible = false
 	_reset_provider_auto_refresh()
 	if is_node_ready():
 		_render()
@@ -345,6 +370,12 @@ func runtime_gate_snapshot() -> Dictionary:
 			"returnKeepsDraft": true,
 			"startIntent": "applyDraft",
 		},
+		"initialIntention": {
+			"available": not in_session_mode and not single_resident_mode,
+			"open": _initial_intention_modal_open,
+			"configured": not _initial_intention_scenario.is_empty(),
+			"targetResidentIds": _initial_intention_recipient_ids(),
+		},
 		"focusOwner": (
 			String(get_viewport().gui_get_focus_owner().name)
 			if get_viewport().gui_get_focus_owner() != null
@@ -441,6 +472,10 @@ func _build_interface() -> void:
 	_composite_desktop.connect("assign_pressed", Callable(self, "_assign_target"))
 	_composite_desktop.connect("apply_pressed", Callable(self, "_open_completion_modal"))
 	_composite_desktop.connect(
+		"initial_intention_pressed",
+		_open_initial_intention_modal,
+	)
+	_composite_desktop.connect(
 		"completion_modal_return_pressed",
 		Callable(self, "_close_completion_modal"),
 	)
@@ -515,6 +550,16 @@ func _build_native_completion_modal() -> void:
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 16)
 	stack.add_child(actions)
+	if not in_session_mode and not single_resident_mode:
+		_native_modal_initial_intention_button = _button(
+			"初始意图",
+			22,
+			"blue",
+			"ModalInitialIntentionButton",
+		)
+		_native_modal_initial_intention_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_native_modal_initial_intention_button.pressed.connect(_open_initial_intention_modal)
+		actions.add_child(_native_modal_initial_intention_button)
 	_native_modal_return_button = _button("返回设置", 22, "paper", "ResponsiveModalReturn")
 	_native_modal_return_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_native_modal_return_button.pressed.connect(_close_completion_modal)
@@ -532,6 +577,214 @@ func _build_native_completion_modal() -> void:
 	_native_modal_start_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_native_modal_start_button.pressed.connect(_start_game_from_completion_modal)
 	actions.add_child(_native_modal_start_button)
+
+
+func _build_initial_intention_modal() -> void:
+	_initial_intention_backdrop = ColorRect.new()
+	_initial_intention_backdrop.name = "InitialIntentionModalBackdrop"
+	_initial_intention_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_initial_intention_backdrop.color = PageTheme.OVERLAY
+	_initial_intention_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	_initial_intention_backdrop.visible = false
+	_initial_intention_backdrop.z_index = 40
+	add_child(_initial_intention_backdrop)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_initial_intention_backdrop.add_child(center)
+	_initial_intention_panel = PanelContainer.new()
+	_initial_intention_panel.name = "InitialIntentionModalPanel"
+	_initial_intention_panel.custom_minimum_size = Vector2(760, 600)
+	_initial_intention_panel.add_theme_stylebox_override("panel", PageTheme.page_shell())
+	_register_border_owner(
+		_initial_intention_panel,
+		"ResidentModelAssignmentInitialIntentionModal",
+		"modal_shell",
+	)
+	center.add_child(_initial_intention_panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 34)
+	margin.add_theme_constant_override("margin_top", 26)
+	margin.add_theme_constant_override("margin_right", 34)
+	margin.add_theme_constant_override("margin_bottom", 26)
+	_initial_intention_panel.add_child(margin)
+	var stack := VBoxContainer.new()
+	stack.add_theme_constant_override("separation", 12)
+	margin.add_child(stack)
+
+	var title := _label("世界初始意图", 30, PageTheme.INK, "InitialIntentionTitle")
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.custom_minimum_size.y = 42
+	stack.add_child(title)
+	var intention_label := _label(
+		"全镇共同前提",
+		18,
+		PageTheme.INK_MUTED,
+		"InitialIntentionTextLabel",
+	)
+	stack.add_child(intention_label)
+	_initial_intention_edit = TextEdit.new()
+	_initial_intention_edit.name = "InitialIntentionEdit"
+	_initial_intention_edit.placeholder_text = "写下所有居民进入世界时共同知晓的目标或意图"
+	_initial_intention_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	_initial_intention_edit.custom_minimum_size = Vector2(0, 250)
+	_initial_intention_edit.add_theme_font_size_override("font_size", 20)
+	_initial_intention_edit.add_theme_color_override("font_color", PageTheme.INK)
+	_initial_intention_edit.add_theme_color_override("font_placeholder_color", PageTheme.INK_MUTED)
+	_initial_intention_edit.add_theme_color_override("caret_color", PageTheme.TERRACOTTA)
+	_initial_intention_edit.add_theme_stylebox_override("normal", PageTheme.inset("normal"))
+	_initial_intention_edit.add_theme_stylebox_override("focus", PageTheme.inset("selected"))
+	_initial_intention_edit.text_changed.connect(_on_initial_intention_text_changed)
+	stack.add_child(_initial_intention_edit)
+
+	_initial_intention_counter = _label(
+		"0 / %d" % INITIAL_INTENTION_MAX_CHARS,
+		16,
+		PageTheme.INK_MUTED,
+		"InitialIntentionCounter",
+	)
+	_initial_intention_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	stack.add_child(_initial_intention_counter)
+	_initial_intention_error = _label("", 17, PageTheme.TERRACOTTA_DARK, "InitialIntentionError")
+	_initial_intention_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_initial_intention_error.custom_minimum_size.y = 28
+	stack.add_child(_initial_intention_error)
+
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 14)
+	stack.add_child(actions)
+	_initial_intention_clear_button = _button("清除", 20, "paper", "InitialIntentionClearButton")
+	_initial_intention_clear_button.custom_minimum_size = Vector2(132, 54)
+	_initial_intention_clear_button.pressed.connect(_request_clear_initial_intention)
+	actions.add_child(_initial_intention_clear_button)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	actions.add_child(spacer)
+	_initial_intention_cancel_button = _button("取消", 20, "paper", "InitialIntentionCancelButton")
+	_initial_intention_cancel_button.custom_minimum_size = Vector2(132, 54)
+	_initial_intention_cancel_button.pressed.connect(_close_initial_intention_modal)
+	actions.add_child(_initial_intention_cancel_button)
+	_initial_intention_save_button = _button("保存", 20, "success", "InitialIntentionSaveButton")
+	_initial_intention_save_button.custom_minimum_size = Vector2(148, 54)
+	_initial_intention_save_button.pressed.connect(_request_save_initial_intention)
+	actions.add_child(_initial_intention_save_button)
+
+
+func set_experiment_scenario(value: Dictionary) -> void:
+	_initial_intention_scenario = value.duplicate(true)
+	if _initial_intention_modal_open:
+		_populate_initial_intention_form()
+	if _completion_modal_open:
+		_set_completion_modal_message(_default_completion_modal_message())
+
+
+func accept_initial_intention_scenario(value: Dictionary) -> void:
+	set_experiment_scenario(value)
+	_close_initial_intention_modal()
+
+
+func reject_initial_intention_request(message: String) -> void:
+	if _initial_intention_error != null:
+		_initial_intention_error.text = message
+	if _initial_intention_save_button != null:
+		_initial_intention_save_button.disabled = false
+
+
+func _open_initial_intention_modal() -> void:
+	if in_session_mode or single_resident_mode:
+		return
+	_initial_intention_modal_open = true
+	_initial_intention_backdrop.visible = true
+	_populate_initial_intention_form()
+	_initial_intention_edit.grab_focus()
+
+
+func _close_initial_intention_modal() -> void:
+	_initial_intention_modal_open = false
+	if _initial_intention_backdrop != null:
+		_initial_intention_backdrop.visible = false
+	if _completion_modal_open:
+		if is_instance_valid(_composite_desktop) and _composite_desktop.is_visible_in_tree():
+			_composite_desktop.call_deferred("focus_initial")
+		elif _native_modal_start_button != null and not _native_modal_start_button.disabled:
+			_native_modal_start_button.call_deferred("grab_focus")
+	elif is_instance_valid(_composite_desktop) and _composite_desktop.is_visible_in_tree():
+		var composite_button := _composite_desktop.focus_target("initial_intention")
+		if composite_button != null:
+			composite_button.call_deferred("grab_focus")
+	elif _initial_intention_button != null:
+		_initial_intention_button.call_deferred("grab_focus")
+
+
+func _populate_initial_intention_form() -> void:
+	if _initial_intention_edit == null:
+		return
+	var observations := _initial_intention_scenario.get("u0Observations", []) as Array
+	_initial_intention_edit.text = (
+		String((observations[0] as Dictionary).get("text", ""))
+		if not observations.is_empty() and observations[0] is Dictionary
+		else ""
+	)
+	_initial_intention_error.text = ""
+	_initial_intention_clear_button.disabled = _initial_intention_scenario.is_empty()
+	_initial_intention_save_button.disabled = false
+	_update_initial_intention_counter()
+
+
+func _on_initial_intention_text_changed() -> void:
+	if _initial_intention_edit.text.length() > INITIAL_INTENTION_MAX_CHARS:
+		_initial_intention_edit.text = _initial_intention_edit.text.left(
+			INITIAL_INTENTION_MAX_CHARS,
+		)
+		_initial_intention_edit.set_caret_line(_initial_intention_edit.get_line_count() - 1)
+		_initial_intention_edit.set_caret_column(
+			_initial_intention_edit.get_line(_initial_intention_edit.get_line_count() - 1).length(),
+		)
+	if _initial_intention_error != null:
+		_initial_intention_error.text = ""
+	_update_initial_intention_counter()
+
+
+func _update_initial_intention_counter() -> void:
+	if _initial_intention_counter != null and _initial_intention_edit != null:
+		_initial_intention_counter.text = "%d / %d" % [
+			_initial_intention_edit.text.length(),
+			INITIAL_INTENTION_MAX_CHARS,
+		]
+
+
+func _request_save_initial_intention() -> void:
+	var text_value := _initial_intention_edit.text.strip_edges()
+	if text_value.is_empty():
+		reject_initial_intention_request("请填写初始意图。")
+		_initial_intention_edit.grab_focus()
+		return
+	_initial_intention_save_button.disabled = true
+	initial_intention_requested.emit({
+		"clear": false,
+		"text": text_value,
+	})
+
+
+func _request_clear_initial_intention() -> void:
+	_initial_intention_clear_button.disabled = true
+	initial_intention_requested.emit({"clear": true})
+
+
+func _initial_intention_recipient_ids() -> Array[String]:
+	var result: Array[String] = []
+	for observation_value: Variant in (
+		_initial_intention_scenario.get("u0Observations", []) as Array
+	):
+		if not observation_value is Dictionary:
+			continue
+		var resident_id := String(
+			(observation_value as Dictionary).get("targetResidentId", ""),
+		).strip_edges()
+		if not resident_id.is_empty() and not result.has(resident_id):
+			result.append(resident_id)
+	return result
 
 
 func _reset_provider_auto_refresh() -> void:
@@ -848,6 +1101,16 @@ func _build_inspector_section() -> void:
 	_refresh_button.custom_minimum_size = Vector2(180, 52)
 	_refresh_button.pressed.connect(_request_manual_provider_refresh)
 	stack.add_child(_refresh_button)
+	if not in_session_mode and not single_resident_mode:
+		_initial_intention_button = _button(
+			"设置初始意图",
+			18,
+			"blue",
+			"InitialIntentionButton",
+		)
+		_initial_intention_button.custom_minimum_size = Vector2(180, 52)
+		_initial_intention_button.pressed.connect(_open_initial_intention_modal)
+		stack.add_child(_initial_intention_button)
 
 	_assign_button = _button("更新当前居民草稿", 22, "success", "AssignButton")
 	_assign_button.custom_minimum_size = Vector2(0, 64)
@@ -1397,19 +1660,13 @@ func _open_completion_modal() -> void:
 		action_blocked.emit(String(action.get("intent", "")), reason)
 		return
 	_completion_modal_open = true
-	_set_completion_modal_message(
-		(
-			"这位新居民的模型已经配置完成\n确认后会立即进入小镇。"
-			if single_resident_mode
-			else "15 位居民的模型均已配置完成\n保存后会立即用于当前小镇。"
-			if in_session_mode
-			else "15 位居民的模型均已配置完成\n现在可以开始游戏。"
-		)
-	)
+	_set_completion_modal_message(_default_completion_modal_message())
 	_sync_completion_modal_visibility()
 
 
 func _close_completion_modal() -> void:
+	if _initial_intention_modal_open:
+		_close_initial_intention_modal()
 	_completion_modal_open = false
 	_sync_completion_modal_visibility()
 	call_deferred("_restore_apply_focus")
@@ -1461,6 +1718,16 @@ func _set_completion_modal_message(message: String) -> void:
 		_native_modal_body.text = message
 	if is_instance_valid(_composite_desktop):
 		_composite_desktop.call("set_completion_modal_message", message)
+
+
+func _default_completion_modal_message() -> String:
+	if single_resident_mode:
+		return "这位新居民的模型已经配置完成\n确认后会立即进入小镇。"
+	if in_session_mode:
+		return "15 位居民的模型均已配置完成\n保存后会立即用于当前小镇。"
+	if not _initial_intention_scenario.is_empty():
+		return "15 位居民的模型均已配置完成\n已设置全镇初始意图。"
+	return "15 位居民的模型均已配置完成\n可设置初始意图，或直接开始游戏。"
 
 
 func _sync_completion_modal_visibility() -> void:

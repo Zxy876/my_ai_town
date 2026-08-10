@@ -5,6 +5,9 @@ extends RefCounted
 const MANIFEST := preload(
 	"res://world/presentation/session/TownSessionSaveManifest.gd"
 )
+const EXPERIMENT_STATE := preload(
+	"res://world/integration/TownExperimentScenarioState.gd"
+)
 const STORE_METHODS: Array[String] = [
 	"begin_slot_transaction",
 	"end_slot_transaction",
@@ -58,6 +61,7 @@ const SESSION_CONFIG_FIELDS: Array[String] = [
 	"useLiveModel",
 	"enablePlayerAvatar",
 	"enableTestUi",
+	"experimentState",
 ]
 
 var _store: Object
@@ -1610,6 +1614,16 @@ func _validate_session_config(
 	)
 	if binding_validation.get("ok") != true:
 		return binding_validation
+	if value.has("experimentState"):
+		var resident_ids: Array[String] = []
+		for resident_id_value: Variant in expected_resident_ids:
+			resident_ids.append(String(resident_id_value))
+		var experiment_validation := EXPERIMENT_STATE.new().validate_persistent_state(
+			value.get("experimentState"),
+			resident_ids,
+		) as Dictionary
+		if not bool(experiment_validation.get("ok", false)):
+			return _failure("SESSION_SAVE_EXPERIMENT_STATE_INVALID", false)
 	return {
 		"ok": true,
 		"errorCode": "",

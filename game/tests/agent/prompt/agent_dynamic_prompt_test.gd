@@ -13,6 +13,10 @@ func _test_stable_baseline_and_dynamic_context(compiler_script: Script) -> void:
 	var initialization := _initialization()
 	var compiler: RefCounted = compiler_script.new(initialization)
 	var first_wake := _wake_packet("prompt-1", "小雨")
+	first_wake["runtime_observations"] = [{
+		"observation_id": "runtime-observation-prompt-1",
+		"text": "诊所候诊区已经有两个人等了很久。",
+	}]
 	var memory_prompt := "\n".join([
 		"[重要记忆]",
 		"唐小满离开后，搭话没有发生；我错过了解释机会。",
@@ -54,6 +58,18 @@ func _test_stable_baseline_and_dynamic_context(compiler_script: Script) -> void:
 	_expect(user_text.contains("[可选行动]"), "L10 action constraints are compiled every turn")
 	_expect(user_text.contains("prompt-1"), "current decision id enters the dynamic context")
 	_expect(user_text.contains("小雨"), "current world facts enter the dynamic context")
+	_expect(
+		user_text.contains("[刚刚注意到的信息]")
+		and user_text.contains("诊所候诊区已经有两个人等了很久。"),
+		"runtime observation text enters the ordinary dynamic context",
+	)
+	_expect(
+		not user_text.contains("runtime-observation-prompt-1")
+		and not user_text.contains("U0")
+		and not user_text.contains("U+")
+		and not user_text.contains("U-"),
+		"runtime observation control metadata stays outside the model prompt",
+	)
 	_expect(
 		user_text.contains("生活状态：精力38，饱腹31，压力54，想找人72，想独处18"),
 		"changing daily needs enter the Agent decision context without verbose prose",

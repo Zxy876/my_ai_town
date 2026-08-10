@@ -28,6 +28,8 @@ func project(old_summary: Dictionary, entries: Array) -> Dictionary:
 		elif state == "corrected":
 			thought_lines.push_front("我后来修正了理解：%s" % subject)
 	var important := "\n".join(important_lines)
+	if important.is_empty():
+		important = String(old_summary.get("important_memories", "")).strip_edges()
 	if important.length() > MAX_IMPORTANT_CHARACTERS:
 		important = important.right(MAX_IMPORTANT_CHARACTERS)
 	var old_thoughts := String(old_summary.get("current_thoughts", "")).strip_edges()

@@ -107,6 +107,8 @@ func _build_dynamic_context(
 %s
 
 %s
+
+%s
 </wake_context>
 
 <retry_correction>
@@ -125,6 +127,9 @@ func _build_dynamic_context(
 			(
 				wake_packet.get("snapshot", {}) as Dictionary
 			).get("social_matters", []) as Array,
+		),
+		_render_runtime_observations(
+			wake_packet.get("runtime_observations", []) as Array,
 		),
 		_render_events(wake_packet.get("events", []) as Array),
 		_render_action_results(wake_packet.get("action_results", []) as Array),
@@ -893,6 +898,20 @@ func _render_events(events: Array) -> String:
 				lines.append_array(_render_turns(event.get("turns", []) as Array))
 			_:
 				lines.append(prefix)
+	return "\n".join(lines)
+
+
+func _render_runtime_observations(observations: Array) -> String:
+	if observations.is_empty():
+		return ""
+	var lines: Array[String] = ["[刚刚注意到的信息]"]
+	for observation_value: Variant in observations:
+		if observation_value is Dictionary:
+			lines.append(
+				"- %s" % _safe(
+					(observation_value as Dictionary).get("text", ""),
+				),
+			)
 	return "\n".join(lines)
 
 

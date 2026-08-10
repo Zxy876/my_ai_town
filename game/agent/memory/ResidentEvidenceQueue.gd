@@ -77,6 +77,25 @@ func append_wake(wake_packet: Variant, matched_intents: Variant) -> Dictionary:
 		if bool(source_result.get("new", false)):
 			new_events.append(event.duplicate(true))
 
+	var new_observations: Array[Dictionary] = []
+	for observation_value: Variant in wake.get(
+		"runtime_observations",
+		[],
+	) as Array:
+		var observation := observation_value as Dictionary
+		var source_ref := "runtime_observation:%s" % String(
+			observation.get("observation_id", ""),
+		)
+		var source_result := _stage_source(
+			staged_hashes,
+			source_ref,
+			observation,
+		)
+		if not bool(source_result.get("ok", false)):
+			return source_result
+		if bool(source_result.get("new", false)):
+			new_observations.append(observation.duplicate(true))
+
 	var new_results: Array[Dictionary] = []
 	var new_intents: Array[Dictionary] = []
 	for result_value: Variant in wake.get("action_results", []) as Array:
@@ -93,7 +112,11 @@ func append_wake(wake_packet: Variant, matched_intents: Variant) -> Dictionary:
 		new_results.append(result.duplicate(true))
 		new_intents.append((intent_by_action_id[action_id] as Dictionary).duplicate(true))
 
-	if new_events.is_empty() and new_results.is_empty():
+	if (
+		new_events.is_empty()
+		and new_observations.is_empty()
+		and new_results.is_empty()
+	):
 		return {
 			"ok": true,
 			"added": false,
@@ -102,6 +125,7 @@ func append_wake(wake_packet: Variant, matched_intents: Variant) -> Dictionary:
 		}
 
 	wake["events"] = new_events
+	wake["runtime_observations"] = new_observations
 	wake["action_results"] = new_results
 	var item := {
 		"wake_packet": wake,
@@ -351,8 +375,9 @@ func _validate_items(value: Variant) -> Dictionary:
 		var result_ids := {}
 		var wake := item["wake_packet"] as Dictionary
 		var events := wake.get("events", []) as Array
+		var observations := wake.get("runtime_observations", []) as Array
 		var action_results := wake.get("action_results", []) as Array
-		if events.is_empty() and action_results.is_empty():
+		if events.is_empty() and observations.is_empty() and action_results.is_empty():
 			return _failure("居民证据队列不能包含空唤醒项")
 		for result_value: Variant in action_results:
 			result_ids[String((result_value as Dictionary).get("action_id", ""))] = true
@@ -377,6 +402,22 @@ func _validate_items(value: Variant) -> Dictionary:
 				return event_source
 			if not bool(event_source.get("new", false)):
 				return _failure("居民证据队列包含重复来源：%s" % event_ref)
+		for observation_value: Variant in observations:
+			var observation := observation_value as Dictionary
+			var observation_ref := "runtime_observation:%s" % String(
+				observation.get("observation_id", ""),
+			)
+			var observation_source := _stage_source(
+				source_hashes,
+				observation_ref,
+				observation,
+			)
+			if not bool(observation_source.get("ok", false)):
+				return observation_source
+			if not bool(observation_source.get("new", false)):
+				return _failure(
+					"居民证据队列包含重复来源：%s" % observation_ref,
+				)
 		for result_value: Variant in wake.get("action_results", []) as Array:
 			var result := result_value as Dictionary
 			var result_ref := (
@@ -457,6 +498,16 @@ func _index_item_sources(item: Dictionary, hashes: Dictionary) -> void:
 	for event_value: Variant in wake.get("events", []) as Array:
 		var event := event_value as Dictionary
 		hashes["event:%s" % String(event.get("event_id", ""))] = _content_hash(event)
+	for observation_value: Variant in wake.get(
+		"runtime_observations",
+		[],
+	) as Array:
+		var observation := observation_value as Dictionary
+		hashes[
+			"runtime_observation:%s" % String(
+				observation.get("observation_id", ""),
+			)
+		] = _content_hash(observation)
 	for result_value: Variant in wake.get("action_results", []) as Array:
 		var result := result_value as Dictionary
 		hashes["action_result:%s" % String(result.get("action_id", ""))] = _content_hash(result)
