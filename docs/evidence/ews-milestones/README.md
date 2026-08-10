@@ -1,10 +1,11 @@
 #  里程碑运行时证据
 
-本目录把六个讨论里程碑与具体代码、运行时画面和证据边界对应起来。
+本目录按讨论时间顺序把九个里程碑与具体代码、运行时画面和证据边界对应起来。
 
 - `runtime-town-observation-entry.jpg`、`runtime-memory-before-fix.jpg`、`runtime-u0-entry-before-fix.jpg` 来自 2026-08-10 本机实际试玩截图，已裁去桌面和聊天窗口，仅保留游戏窗口。它们记录修复前的入口与故障现场。
 - `runtime-natural-language-observation.jpg`、`runtime-self-reflection-memory.jpg`、`runtime-global-u0-form.jpg` 由当前分支加载正式 Godot UI 后运行时渲染。为避免调用真实模型，记忆内容使用确定性的公开摘要输入；它们证明界面和投影能力，不代替真人模型行为验收。
-- “共同办派对”在真实模型下能否经 U-/U+ 形成反思并纠正漂移，仍是独立验收项。
+- `runtime-visible-linlan-u0-memory.jpg`、`runtime-visible-linlan-day2-status.jpg` 来自 2026-08-10 的可见玩家端真实模型运行；该轮只输入一次全局 U0，之后没有投递 U+/U-。
+- “共同办派对”在真实模型下能否先发生偏离、再经真实认知更新计划并自动回正，仍是独立验收项。
 
 ## 1. 统一自然语言介入入口
 
@@ -97,3 +98,43 @@
 - [`town_ui_runtime_test.gd`](../../../game/tests/town_ui_runtime_test.gd)：确认 15 名居民收到相同原文且完整覆盖居民名单。
 
 ![全镇共同前提只有一个自然语言输入框](runtime-global-u0-form.jpg)
+
+## 7. U0 保持长期决策基线
+
+对应 [Issue #8](https://github.com/Zxy876/my_ai_town/issues/8)。
+
+代码：
+
+- [`AgentPromptCompiler.gd`](../../../game/agent/prompt/AgentPromptCompiler.gd)：把 U0 与普通运行时观察分开呈现，并明确它不代表任务已经完成。
+- [`ResidentMemorySystem.gd`](../../../game/agent/memory/ResidentMemorySystem.gd)：让仍有效的 U0 在有界长期记忆检索中保持可召回。
+- [`agent_dynamic_prompt_test.gd`](../../../game/tests/agent/prompt/agent_dynamic_prompt_test.gd) 与 [`resident_memory_system_test.gd`](../../../game/tests/agent/memory/resident_memory_system_test.gd)：覆盖提示语义、标签隔离和后续召回。
+
+可见玩家端中，林岚的 U0 原文显示为“正在影响”，随后记录到达独立市集。
+
+![林岚读取 U0 并到达独立市集](runtime-visible-linlan-u0-memory.jpg)
+
+## 8. 可重试认知失败不污染观察审计
+
+对应 [Issue #9](https://github.com/Zxy876/my_ai_town/issues/9)。
+
+代码：
+
+- [`TownWorldAgentGateway.gd`](../../../game/world/integration/TownWorldAgentGateway.gd)：只在不可重试的最终失败后写入失败结果。
+- [`TownRuntimeObservationAdapter.gd`](../../../game/world/integration/TownRuntimeObservationAdapter.gd)：成功替代认知恢复观察审计并清除旧失败字段。
+- [`runtime_observation_gateway_test.gd`](../../../game/tests/runtime_observation_gateway_test.gd) 与 [`runtime_observation_adapter_test.gd`](../../../game/tests/runtime_observation_adapter_test.gd)：覆盖“无效决定、重试、成功感知”的完整状态迁移。
+
+成功后的玩家端结果可在正式记忆页看到；瞬时重试状态本身以确定性回归测试为证，静态图片不能替代审计迁移证明。
+
+![成功认知后的正式记忆](runtime-visible-linlan-u0-memory.jpg)
+
+## 9. 玩家端直接对齐与自动回正验收
+
+对应 [Issue #10](https://github.com/Zxy876/my_ai_town/issues/10)。
+
+本轮只通过可见玩家端输入一次全局 U0，没有补充 U+/U-。林岚直接读取意图、到达独立市集，并继续形成派对相关记忆；这证明直接对齐，但由于没有观察到先行偏离，不能证明偏离后自动回正。
+
+![玩家端 U0 与后续行动记忆](runtime-visible-linlan-u0-memory.jpg)
+
+第 2 天的公开状态已经回到公共食堂等待服务。该画面用于说明验收观察窗口和行为边界，不把活动期限结束后的普通行动误判为意图漂移。
+
+![第 2 天林岚公开状态](runtime-visible-linlan-day2-status.jpg)

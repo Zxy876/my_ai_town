@@ -15,6 +15,12 @@ U0 已从 Runtime Observation 的玩家入口上移为全局 Scenario 初始条�
 
 认知口径不是固定六阶段流水线。普通认知更新由感知、观察入记忆、相关记忆检索、计划沿用或调整和行动生成构成；反思是记忆累积、矛盾、重复失效或意图偏离达到条件后才发生的高层记忆整理。满足条件时应先写入反思再进行本轮检索和决策，证据不足时不生成反思。
 
+## 玩家端模型行为复核
+
+2026-08-10 从可见玩家界面创建隔离新存档，只输入一次“共同办派对”全局 U0，之后没有投递 U+/U- 或补充观察。林岚的正式记忆显示该 U0 为“正在影响”，并记录他在第 1 天到达独立市集；后续记忆继续涉及场地、桌椅、灯光和居民协作。这证明玩家端一次输入能够直接影响真实认知、长期记忆和世界行动。
+
+该轮也出现“后来得到的亲历证据修正了我原先的理解”的局部事实纠正，但没有先观察到明确的意图偏离。因此本轮不能证明“偏离后经反思或其他高级认知更新计划并自动回正”。直接对齐与自动回正必须继续作为两个验收结果记录，不能互相替代。运行画面见 `docs/evidence/ews-milestones/runtime-visible-linlan-u0-memory.jpg` 与 `runtime-visible-linlan-day2-status.jpg`，完整边界记录见 Issue #10。
+
 ## 逐项结果
 
 1. **通过：U0 对应 observation 和 memory node。** U0 只能作为启动前 Scenario 条件配置，一次输入会覆盖本次确认的全体居民，并在各自第一次 Agent 认知前投递；每条 U0 会立即形成唯一正式记忆节点，`runtime_observation:<scenario-u0-id>` 同时保存在 `claim_root_id` 和 `evidence_refs`。审计还保存实际 `rootMemoryId`，联合存档恢复后映射不变，重复激活保持幂等。
@@ -34,7 +40,7 @@ U0 已从 Runtime Observation 的玩家入口上移为全局 Scenario 初始条�
 
 - `runtime_observation_adapter_test.gd`：目标隔离、唯一标识、幂等、原文保存、失败与状态流转。
 - `experiment_scenario_state_test.gd`：U0 启动前配置、运行时拒绝、首次认知附着、根映射、恢复和中断重投。
-- `runtime_observation_gateway_test.gd`：最终同步后的注入位置、目标感知、存储、重复提交和失败留痕。
+- `runtime_observation_gateway_test.gd`：最终同步后的注入位置、目标感知、存储、重复提交和失败留痕；同时覆盖可重试无效决定不污染观察审计，以及替代认知成功后的恢复。
 - `town_runtime_observation_wake_test.gd`：观察唤醒不移动居民、不取消当前行动。
 - `resident_evidence_queue_test.gd`：原始观察进入私有证据队列并去重。
 - `resident_formal_memory_builder_test.gd`：观察立即形成唯一一阶节点；重复回放幂等；整理只丰富解释而不伪造增信；反思节点保留证据来源并幂等。
@@ -43,6 +49,8 @@ U0 已从 Runtime Observation 的玩家入口上移为全局 Scenario 初始条�
 - `decision_trace_evidence_test.gd`：技术错误、内部重试、回退和世界拒绝分类。
 - `town_conversation_test.gd`：附近约束、回合、主动结束和完成状态。
 - `session_save_continue_roundtrip_test.gd`：真实新游戏中 U0 在首次认知形成根节点，联合保存和继续后 Scenario、Episode、原文及根映射保持一致。
+- `agent_dynamic_prompt_test.gd`：U0 以共同初始意图进入认知，与普通观察分区且不泄露实验标签。
+- `resident_memory_system_test.gd`：U0 在后续无关场景中仍能在正常有界检索内被召回。
 
 ## 下一验收里程碑
 
