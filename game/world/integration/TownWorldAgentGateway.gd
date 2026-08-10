@@ -1921,14 +1921,18 @@ func _on_agent_result(
 		or String(inflight.get("residentId", "")) != resident_id
 	):
 		return
-	_runtime_observations.mark_result(
-		decision_id,
-		bool(result.get("ok", false)),
-		String(result.get("errorCode", "AGENT_DECISION_REQUEST_FAILED")),
+	var result_ok := bool(result.get("ok", false))
+	var result_error_code := String(
+		result.get("errorCode", "AGENT_DECISION_REQUEST_FAILED"),
 	)
 	var superseded := bool(inflight.get("superseded", false))
 	_inflight.erase(decision_id)
 	if superseded or bool(result.get("stale", false)):
+		_runtime_observations.mark_result(
+			decision_id,
+			result_ok,
+			result_error_code,
+		)
 		_decision_attempts.erase(decision_id)
 		if not debug_decision_completed.get_connections().is_empty():
 			debug_decision_completed.emit({
@@ -1945,7 +1949,7 @@ func _on_agent_result(
 				"agentResult": result.duplicate(true),
 			})
 		return
-	if not bool(result.get("ok", false)):
+	if not result_ok:
 		var diagnostic := _provider_service.get_latest_diagnostic(resident_id,) as Dictionary
 		var agent_errors_value: Variant = result.get("errors", [])
 		if agent_errors_value is Array:
@@ -2015,6 +2019,12 @@ func _on_agent_result(
 				inflight_wake,
 				error_code,
 			)
+		if not should_retry:
+			_runtime_observations.mark_result(
+				decision_id,
+				fallback_applied,
+				error_code,
+			)
 		if not debug_decision_completed.get_connections().is_empty():
 			debug_decision_completed.emit({
 				"residentId": resident_id,
@@ -2030,6 +2040,7 @@ func _on_agent_result(
 				"diagnostic": diagnostic.duplicate(true),
 			})
 		return
+	_runtime_observations.mark_result(decision_id, true)
 	_decision_attempts.erase(decision_id)
 	_clear_nonfinal_decision_errors(decision_id)
 	var decision := result.get("decision", {}) as Dictionary

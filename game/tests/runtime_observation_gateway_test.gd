@@ -70,6 +70,16 @@ class RecordingAgent:
 		completion.call(result)
 
 
+class RetryProviderService:
+	extends RefCounted
+
+	func get_latest_diagnostic(_resident_id: String) -> Dictionary:
+		return {
+			"error_type": "invalid_decision_json",
+			"retryable": true,
+		}
+
+
 func _initialize() -> void:
 	var gateway: Node = GATEWAY.new()
 	root.add_child(gateway)
@@ -222,11 +232,132 @@ func _initialize() -> void:
 		"the resident's first available cognition receives deferred U0",
 	)
 	if initial_payloads.size() == 1:
+		_expect(
+			String((initial_payloads[0] as Dictionary).get("observation_id", "")).begins_with(
+				"scenario-u0-"
+			),
+			"the player's initial intention keeps the scenario identity used by cognition",
+		)
 		_expect_equal(
 			(initial_payloads[0] as Dictionary).get("text"),
 			"林岚和唐小满打算共同举办派对。",
 			"first cognition receives the player's exact initial intention",
 		)
+		_expect(
+			not (initial_payloads[0] as Dictionary).has("kind"),
+			"initial cognition receives natural language without a U0 control label",
+		)
+	initial_agent.complete({
+		"ok": true,
+		"decision": {
+			"decision_id": "initial-intention-first-cognition",
+			"handling": "continue_current",
+		},
+	})
+	initial_world.wake = TestData.wake_packet("player-feedback-second-cognition")
+	var player_feedback := initial_gateway.call("queue_runtime_observation", {
+		"observationId": "player-feedback-after-u0",
+		"targetResidentId": "resident-lin-lan",
+		"kind": "U-",
+		"text": "已经接近傍晚，林岚还没有去市集确认派对场地。",
+	}) as Dictionary
+	_expect_ok(
+		player_feedback,
+		"the player observation entry accepts follow-up evidence after U0",
+	)
+	initial_gateway.call("_request_agent_decision", {
+		"residentId": "resident-lin-lan",
+		"residentName": "林岚",
+		"wakePacket": initial_world.wake.duplicate(true),
+	})
+	var feedback_payloads := (
+		initial_agent.received_wake.get("runtime_observations", []) as Array
+	)
+	_expect_equal(
+		feedback_payloads.size(),
+		1,
+		"player follow-up reaches the same decision request used by initial intention",
+	)
+	if feedback_payloads.size() == 1:
+		_expect_equal(
+			(feedback_payloads[0] as Dictionary).get("text"),
+			"已经接近傍晚，林岚还没有去市集确认派对场地。",
+			"second cognition receives the player's exact follow-up evidence",
+		)
+		_expect(
+			not (feedback_payloads[0] as Dictionary).has("kind"),
+			"second cognition receives natural language without a U- control label",
+		)
+
+	var retry_gateway: Node = GATEWAY.new()
+	root.add_child(retry_gateway)
+	var retry_world := RecordingWorld.new()
+	retry_world.wake = TestData.wake_packet("retryable-observation-cognition")
+	var retry_agent := RecordingAgent.new()
+	retry_gateway.set("_world", retry_world)
+	retry_gateway.set("_agent_system", retry_agent)
+	retry_gateway.set("_provider_service", RetryProviderService.new())
+	retry_gateway.set("_session_active", true)
+	retry_gateway.set("_connected_resident_ids", connected_residents)
+	_expect_ok(retry_gateway.call("queue_runtime_observation", {
+		"observationId": "retryable-player-observation",
+		"targetResidentId": "resident-lin-lan",
+		"text": "共同派对仍需要确认场地。",
+	}), "retry fixture queues a player observation")
+	var retry_request := {
+		"residentId": "resident-lin-lan",
+		"residentName": "林岚",
+		"wakePacket": retry_world.wake.duplicate(true),
+	}
+	retry_gateway.call("_request_agent_decision", retry_request)
+	retry_agent.complete({
+		"ok": false,
+		"errorCode": "AGENT_DECISION_RESPONSE_INVALID",
+		"errors": ["第一次输出不是合法决定"],
+	})
+	var retry_pending_audit := retry_gateway.call(
+		"get_runtime_observation_audit",
+		"retryable-player-observation",
+	) as Dictionary
+	_expect_equal(
+		retry_pending_audit.get("failed"),
+		false,
+		"a retryable model error does not poison the player observation audit",
+	)
+	_expect_equal(
+		retry_pending_audit.get("perceived"),
+		false,
+		"a retryable model error waits for the replacement cognition",
+	)
+	retry_gateway.call("_request_agent_decision", retry_request)
+	var retry_payloads := retry_agent.received_wake.get("runtime_observations", []) as Array
+	_expect_equal(
+		retry_payloads.size(),
+		1,
+		"the replacement cognition receives the same stored observation",
+	)
+	retry_agent.complete({
+		"ok": true,
+		"decision": {
+			"decision_id": "retryable-observation-cognition",
+			"handling": "continue_current",
+		},
+	})
+	var retry_recovered_audit := retry_gateway.call(
+		"get_runtime_observation_audit",
+		"retryable-player-observation",
+	) as Dictionary
+	_expect_equal(
+		retry_recovered_audit.get("perceived"),
+		true,
+		"a successful retry marks the player observation perceived",
+	)
+	_expect_equal(
+		retry_recovered_audit.get("failed"),
+		false,
+		"a successful retry leaves no stale failure marker",
+	)
+	retry_gateway.queue_free()
 	initial_gateway.queue_free()
 	gateway.queue_free()
 	_finish_suite("RUNTIME_OBSERVATION_GATEWAY_PASS")

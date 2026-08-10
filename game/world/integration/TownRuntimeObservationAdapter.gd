@@ -223,13 +223,22 @@ func release_dispatch(decision_id: String) -> void:
 
 func mark_result(decision_id: String, ok: bool, failure_code := "") -> void:
 	var normalized := decision_id.strip_edges()
-	for observation_id: String in _decision_observation_ids(normalized):
+	var observation_ids := _decision_observation_ids(normalized)
+	if observation_ids.is_empty():
+		for observation_id: String in _record_order:
+			if not _records_by_id.has(observation_id):
+				continue
+			var historical := _records_by_id[observation_id] as Dictionary
+			if String(historical.get("actualDecisionId", "")) == normalized:
+				observation_ids.append(observation_id)
+	for observation_id: String in observation_ids:
 		if not _records_by_id.has(observation_id):
 			continue
 		var record := _records_by_id[observation_id] as Dictionary
 		if ok:
 			record["status"] = "perceived"
 			record["perceived"] = true
+			record["failed"] = false
 			record["failureCode"] = ""
 		else:
 			record["status"] = "failed"

@@ -104,6 +104,48 @@ func _initialize() -> void:
 		"runtime-observation-decision-1",
 		"audit records the actual cognitive step",
 	)
+	var recovered_request := {
+		"observationId": "manual-recovered-result",
+		"targetResidentId": "resident-lin-lan",
+		"text": "第一次模型回复无效，但重试后居民完成了这次认知。",
+	}
+	_expect_ok(
+		adapter.call("enqueue", recovered_request, valid_residents),
+		"recovered-result fixture can enqueue",
+	)
+	adapter.call(
+		"attach_to_wake",
+		"resident-lin-lan",
+		"runtime-observation-recovered-result",
+		TestData.wake_packet("runtime-observation-recovered-result"),
+	)
+	adapter.call("mark_stored", "runtime-observation-recovered-result")
+	adapter.call(
+		"mark_result",
+		"runtime-observation-recovered-result",
+		false,
+		"AGENT_DECISION_REQUEST_FAILED",
+	)
+	adapter.call("mark_result", "runtime-observation-recovered-result", true)
+	var recovered_audit := adapter.call(
+		"audit_snapshot",
+		"manual-recovered-result",
+	) as Dictionary
+	_expect_equal(
+		recovered_audit.get("perceived"),
+		true,
+		"a later successful cognition recovers the observation audit",
+	)
+	_expect_equal(
+		recovered_audit.get("failed"),
+		false,
+		"a recovered observation no longer remains falsely failed",
+	)
+	_expect_equal(
+		recovered_audit.get("failureCode"),
+		"",
+		"a recovered observation clears the stale failure code",
+	)
 	_expect_ok(
 		adapter.call("mark_outcome", "manual-u0-1", "not_adopted"),
 		"manual evaluation can mark non-adoption",
