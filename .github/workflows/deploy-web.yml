@@ -28,14 +28,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y curl openssh-client ripgrep rsync unzip
 
       - name: Cache Godot and export templates
         id: godot-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/godot-bin
@@ -70,7 +70,7 @@ jobs:
         run: echo "$HOME/godot-bin" >> "$GITHUB_PATH"
 
       - name: Cache Godot imports
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: game/.godot
           key: godot-import-web-${{ env.GODOT_VERSION }}-${{ hashFiles('game/**/*.import', 'game/project.godot') }}
