@@ -1,0 +1,154 @@
+name: deploy-web
+
+on:
+  push:
+    branches:
+      - main
+      - agent/ews-global-u0
+    paths:
+      - game/**
+      - .github/workflows/deploy-web.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-town-web-production
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.1"
+
+jobs:
+  deploy:
+    name: 导出并发布 Web 版
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y curl openssh-client ripgrep rsync unzip
+
+      - name: Cache Godot and export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot-bin
+            ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable
+          key: godot-${{ env.GODOT_VERSION }}-linux-x86_64-web
+
+      - name: Download verified Godot release
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd /tmp
+          binary="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          templates="Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -fsSLO "$base/$binary"
+          curl -fsSLO "$base/$templates"
+          curl -fsSLO "$base/SHA512-SUMS.txt"
+          grep "  $binary$" SHA512-SUMS.txt | sha512sum --check -
+          grep "  $templates$" SHA512-SUMS.txt | sha512sum --check -
+
+          mkdir -p "$HOME/godot-bin"
+          unzip -q "$binary" -d /tmp/godot-extract
+          mv "/tmp/godot-extract/Godot_v${GODOT_VERSION}-stable_linux.x86_64" "$HOME/godot-bin/godot"
+          chmod +x "$HOME/godot-bin/godot"
+
+          template_dir="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$template_dir"
+          unzip -q "$templates" -d /tmp/godot-templates
+          mv /tmp/godot-templates/templates/* "$template_dir/"
+
+      - name: Add Godot to PATH
+        run: echo "$HOME/godot-bin" >> "$GITHUB_PATH"
+
+      - name: Cache Godot imports
+        uses: actions/cache@v4
+        with:
+          path: game/.godot
+          key: godot-import-web-${{ env.GODOT_VERSION }}-${{ hashFiles('game/**/*.import', 'game/project.godot') }}
+          restore-keys: |
+            godot-import-web-${{ env.GODOT_VERSION }}-
+
+      - name: Import project
+        run: |
+          set -o pipefail
+          godot --headless --path game --import 2>&1 | tee /tmp/godot-import.log
+          if grep -qE '^ERROR:|SCRIPT ERROR:|Parse Error:|Failed to load script' /tmp/godot-import.log; then
+            echo "::error::Godot import produced engine or script errors."
+            grep -nE '^ERROR:|SCRIPT ERROR:|Parse Error:|Failed to load script' /tmp/godot-import.log | head -20
+            exit 1
+          fi
+
+      - name: Verify Web provider behavior
+        run: |
+          godot --headless --path game --script res://tests/town_provider_credential_web_device_id_test.gd
+          godot --headless --path game --script res://tests/town_web_deepseek_defaults_test.gd
+
+      - name: Export Web build
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/web-build"
+          godot --headless --path game --export-release Web "$GITHUB_WORKSPACE/web-build/index.html"
+          test -s web-build/index.html
+          test -s web-build/index.pck
+          test -s web-build/index.wasm
+
+      - name: Ensure no API key entered the browser bundle
+        run: |
+          if rg -a -n 'sk-[A-Za-z0-9_-]{20,}' web-build; then
+            echo "::error::A credential-like value was found in the Web build."
+            exit 1
+          fi
+
+      - name: Configure deployment SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ai-town-deploy"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/ai-town-deploy" "$HOME/.ssh/known_hosts"
+
+      - name: Upload immutable release
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-i "$HOME/.ssh/ai-town-deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          destination="/opt/maieutic/public/ai-town-releases/$GITHUB_SHA"
+          ssh "${ssh_args[@]}" "$VPS_USER@$VPS_HOST" \
+            "mkdir -p '$destination' && find '$destination' -mindepth 1 -delete"
+          rsync -az --delete-delay --delay-updates \
+            --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
+            -e "ssh -i $HOME/.ssh/ai-town-deploy -o BatchMode=yes -o StrictHostKeyChecking=yes" \
+            web-build/ "$VPS_USER@$VPS_HOST:$destination/"
+
+      - name: Activate and verify release
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-i "$HOME/.ssh/ai-town-deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          destination="/opt/maieutic/public/ai-town-releases/$GITHUB_SHA"
+          ssh "${ssh_args[@]}" "$VPS_USER@$VPS_HOST" "
+            set -eu
+            test -s '$destination/index.html'
+            test -s '$destination/index.pck'
+            test -s '$destination/index.wasm'
+            sudo -n /usr/local/sbin/ai-town-activate '$GITHUB_SHA'
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/ai-town/)\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/ai-town/index.wasm)\" = 200
+          "
+          echo "Published commit $GITHUB_SHA to http://$VPS_HOST/ai-town/"
