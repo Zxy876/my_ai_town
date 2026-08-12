@@ -104,6 +104,13 @@ jobs:
           test -s web-build/index.pck
           test -s web-build/index.wasm
 
+      - name: Version large Web assets for persistent browser caching
+        run: |
+          set -euo pipefail
+          sh deploy/tencent/version-web-assets.sh web-build | tee /tmp/versioned-web-assets.env
+          test -L web-build/index.pck
+          test -L web-build/index.wasm
+
       - name: Ensure no API key entered the browser bundle
         run: |
           if rg -a -n 'sk-[A-Za-z0-9_-]{20,}' web-build; then
@@ -150,9 +157,22 @@ jobs:
             test -s '$destination/index.html'
             test -s '$destination/index.pck'
             test -s '$destination/index.wasm'
+            sudo -n /usr/local/sbin/ai-town-install-nginx-config
             sudo -n /usr/local/sbin/ai-town-activate '$GITHUB_SHA'
             test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}')\" = 200
             test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}index.wasm')\" = 200
+
+            versioned_pck=\$(sed -n 's/.*\"mainPack\":\"\([^\"]*\.pck\)\".*/\1/p' '$destination/index.html')
+            versioned_wasm_base=\$(sed -n 's/.*\"executable\":\"\([^\"]*\)\".*/\1/p' '$destination/index.html')
+            test -n \"\$versioned_pck\"
+            test -n \"\$versioned_wasm_base\"
+            test -s \"$destination/\$versioned_pck\"
+            test -s \"$destination/\$versioned_wasm_base.wasm\"
+            pck_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_pck\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
+            wasm_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_wasm_base.wasm\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
+            printf 'PCK_CACHE=%s\\nWASM_CACHE=%s\\n' \"\$pck_cache\" \"\$wasm_cache\"
+            echo \"\$pck_cache\" | grep -Fq immutable
+            echo \"\$wasm_cache\" | grep -Fq immutable
           "
 
           page_status=000

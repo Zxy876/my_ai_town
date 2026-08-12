@@ -1,0 +1,48 @@
+#!/bin/sh
+set -eu
+
+config=/opt/maieutic/nginx.conf
+compose=/opt/maieutic/docker-compose.yml
+backup_dir=/opt/maieutic/.deploy-backups
+
+[ "$(id -u)" -eq 0 ]
+test -s "$config"
+test -s "$compose"
+mkdir -p "$backup_dir"
+
+backup="$backup_dir/nginx.conf-pre-ai-town-cache-$(date +%Y%m%d-%H%M%S)"
+next=$(mktemp /opt/maieutic/.nginx-ai-town-cache.XXXXXX)
+edited=$(mktemp /opt/maieutic/.nginx-ai-town-cache-edited.XXXXXX)
+trap 'rm -f "$next" "$edited"' EXIT
+cp -p "$config" "$backup"
+cp -p "$config" "$next"
+
+if ! grep -Fq 'map $uri $ai_town_asset_cache_control {' "$next"; then
+	awk '
+		{ print }
+		$0 == "limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;" {
+			print ""
+			print "map $uri $ai_town_asset_cache_control {"
+			print "    default \"public, max-age=3600\";"
+			print "    \"~^/ai-town/index\\.[0-9a-f]{16}\\.(pck|wasm)$\" \"public, max-age=31536000, immutable\";"
+			print "}"
+		}
+	' "$next" > "$edited"
+	cp -p "$edited" "$next"
+fi
+
+sed 's/add_header Cache-Control "public, max-age=3600" always;/add_header Cache-Control $ai_town_asset_cache_control always;/' \
+	"$next" > "$edited"
+
+grep -Fq 'map $uri $ai_town_asset_cache_control {' "$edited"
+grep -Fq 'add_header Cache-Control $ai_town_asset_cache_control always;' "$edited"
+cp -p "$edited" "$config"
+
+if ! docker compose -f "$compose" exec -T nginx nginx -t; then
+	cp -p "$backup" "$config"
+	docker compose -f "$compose" exec -T nginx nginx -t
+	exit 1
+fi
+
+docker compose -f "$compose" exec -T nginx nginx -s reload
+printf 'AI_TOWN_NGINX_CACHE=installed\n'
