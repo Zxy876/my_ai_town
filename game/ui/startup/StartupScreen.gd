@@ -622,7 +622,7 @@ func _sync_weather_shader() -> void:
 		) > 0.001
 
 
-func _show_notice(message: String) -> void:
+func _show_notice(message: String, hold_seconds: float = 1.8) -> void:
 	if _save_summary_label == null:
 		return
 	if _notice_tween != null and _notice_tween.is_valid():
@@ -631,7 +631,7 @@ func _show_notice(message: String) -> void:
 	_save_summary_label.tooltip_text = message
 	_save_summary_label.modulate.a = 1.0
 	_notice_tween = create_tween()
-	_notice_tween.tween_interval(1.8)
+	_notice_tween.tween_interval(hold_seconds)
 	_notice_tween.tween_property(_save_summary_label, "modulate:a", 0.0, 0.35)
 	_notice_tween.tween_callback(_restore_save_summary)
 
@@ -1196,7 +1196,7 @@ func present_host_result(intent: StringName, result: Dictionary) -> void:
 	if bool(result.get("ok", false)):
 		_show_notice("正在进入…")
 		return
-	_show_notice(_host_failure_copy(result))
+	_show_notice(_host_failure_copy(result), 6.0)
 
 
 func _host_failure_copy(result: Dictionary) -> String:
@@ -1218,6 +1218,8 @@ func _host_failure_copy(result: Dictionary) -> String:
 		"FORMAL_SLOT_ARCHIVE_RECOVERY_METADATA_INVALID", \
 		"FORMAL_SLOT_ARCHIVE_RECOVERY_FAILED":
 			return "上次存档处理尚未完成，请稍后重试。"
+		"FORMAL_SLOT_ARCHIVE_STORE_FAILED":
+			return "浏览器暂时无法写入小镇存档，请检查无痕模式或存储权限后重试。"
 		"GAME_FLOW_WORLD_INTRO_ROUTE_FAILED":
 			return "小镇介绍页暂时无法打开，请重试。"
 		"STARTUP_NEW_GAME_NOT_AUTHORIZED", "FORMAL_ENTRY_NOT_READY":

@@ -2100,7 +2100,10 @@ func _valid_ephemeral_claim_owner(
 		and owner.get("schema") == "town-session-save-ephemeral-claim"
 		and owner.get("claim_path_sha256") == claim_path.sha256_text()
 		and owner_pid_value is String
-		and _canonical_positive_integer_text(owner_pid_value as String)
+		and _valid_ephemeral_owner_pid(
+			owner_pid_value as String,
+			schema_version_value as String,
+		)
 		and (
 			schema_version_value == "1"
 			or (
@@ -2115,6 +2118,15 @@ func _valid_ephemeral_claim_owner(
 		and created_value is String
 		and _canonical_positive_integer_text(created_value as String)
 	)
+
+
+func _valid_ephemeral_owner_pid(value: String, schema_version: String) -> bool:
+	# Godot exposes PID 0 on Web. Version 2 owners also carry a per-runtime
+	# process identity, which keeps refresh recovery and owned-release checks
+	# deterministic without weakening native PID validation.
+	if OS.get_name() == "Web":
+		return schema_version == "2" and value == "0"
+	return _canonical_positive_integer_text(value)
 
 
 func _canonical_positive_integer_text(value: String) -> bool:
