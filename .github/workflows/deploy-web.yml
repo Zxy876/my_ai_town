@@ -7,6 +7,7 @@ on:
       - agent/ews-global-u0
     paths:
       - game/**
+      - deploy/tencent/**
       - .github/workflows/deploy-web.yml
   workflow_dispatch:
 
@@ -19,6 +20,8 @@ concurrency:
 
 env:
   GODOT_VERSION: "4.7.1"
+  AI_TOWN_PUBLIC_HOST: "43-128-24-238.sslip.io"
+  AI_TOWN_PUBLIC_URL: "https://43-128-24-238.sslip.io/ai-town/"
 
 jobs:
   deploy:
@@ -148,7 +151,18 @@ jobs:
             test -s '$destination/index.pck'
             test -s '$destination/index.wasm'
             sudo -n /usr/local/sbin/ai-town-activate '$GITHUB_SHA'
-            test \"\$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/ai-town/)\" = 200
-            test \"\$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/ai-town/index.wasm)\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}index.wasm')\" = 200
           "
-          echo "Published commit $GITHUB_SHA to http://$VPS_HOST/ai-town/"
+
+          page_status=000
+          wasm_status=000
+          for attempt in $(seq 1 30); do
+            page_status=$(curl -sS --connect-timeout 10 -o /dev/null -w '%{http_code}' "$AI_TOWN_PUBLIC_URL" || true)
+            wasm_status=$(curl -sS --connect-timeout 10 -o /dev/null -w '%{http_code}' "${AI_TOWN_PUBLIC_URL}index.wasm" || true)
+            [ "$page_status" = 200 ] && [ "$wasm_status" = 200 ] && break
+            sleep 2
+          done
+          test "$page_status" = 200
+          test "$wasm_status" = 200
+          echo "Published commit $GITHUB_SHA to $AI_TOWN_PUBLIC_URL"
