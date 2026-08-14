@@ -23,6 +23,7 @@ const CompositeDesktop = preload(
 const FormalDialog = preload(
 	"res://ui/common/formal_dialog/FormalConfirmationDialog.gd"
 )
+const WebInputBridge = preload("res://ui/common/WebTextInputBridge.gd")
 
 const SCOPE := "resident_model_assignment"
 const MAP_TEXTURE_PATH := (
@@ -148,6 +149,7 @@ var _initial_intention_error: Label
 var _initial_intention_clear_button: Button
 var _initial_intention_cancel_button: Button
 var _initial_intention_save_button: Button
+var _initial_intention_web_input: WebTextInputBridge
 var _exit_confirmation: FormalDialog
 
 
@@ -167,6 +169,15 @@ func _ready() -> void:
 	_render()
 	_update_provider_auto_refresh()
 	call_deferred("_focus_initial_control")
+
+
+func _exit_tree() -> void:
+	_close_initial_intention_web_input()
+
+
+func _process(_delta: float) -> void:
+	if _initial_intention_modal_open:
+		_sync_initial_intention_from_web()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -636,7 +647,11 @@ func _build_initial_intention_modal() -> void:
 	_initial_intention_edit.add_theme_stylebox_override("normal", PageTheme.inset("normal"))
 	_initial_intention_edit.add_theme_stylebox_override("focus", PageTheme.inset("selected"))
 	_initial_intention_edit.text_changed.connect(_on_initial_intention_text_changed)
+	_initial_intention_edit.resized.connect(_refresh_initial_intention_web_input)
 	stack.add_child(_initial_intention_edit)
+	_initial_intention_web_input = WebInputBridge.new()
+	_initial_intention_web_input.text_changed.connect(_on_initial_intention_web_text_changed)
+	_initial_intention_web_input.cancel_requested.connect(_close_initial_intention_modal)
 
 	_initial_intention_counter = _label(
 		"0 / %d" % INITIAL_INTENTION_MAX_CHARS,
@@ -697,10 +712,12 @@ func _open_initial_intention_modal() -> void:
 	_initial_intention_modal_open = true
 	_initial_intention_backdrop.visible = true
 	_populate_initial_intention_form()
-	_initial_intention_edit.grab_focus()
+	if not _open_initial_intention_web_input():
+		_initial_intention_edit.grab_focus()
 
 
 func _close_initial_intention_modal() -> void:
+	_close_initial_intention_web_input()
 	_initial_intention_modal_open = false
 	if _initial_intention_backdrop != null:
 		_initial_intention_backdrop.visible = false
@@ -730,6 +747,8 @@ func _populate_initial_intention_form() -> void:
 	_initial_intention_clear_button.disabled = _initial_intention_scenario.is_empty()
 	_initial_intention_save_button.disabled = false
 	_update_initial_intention_counter()
+	if _initial_intention_web_input != null and _initial_intention_web_input.is_open():
+		_initial_intention_web_input.set_text(_initial_intention_edit.text)
 
 
 func _on_initial_intention_text_changed() -> void:
@@ -746,6 +765,54 @@ func _on_initial_intention_text_changed() -> void:
 	_update_initial_intention_counter()
 
 
+func _on_initial_intention_web_text_changed(value: String) -> void:
+	if _initial_intention_edit != null and _initial_intention_edit.text != value:
+		_initial_intention_edit.text = value
+		_on_initial_intention_text_changed()
+
+
+func _open_initial_intention_web_input() -> bool:
+	if _initial_intention_web_input == null or not OS.has_feature("web"):
+		return false
+	_initial_intention_edit.release_focus()
+	var opened := _initial_intention_web_input.open(
+		_initial_intention_edit,
+		_initial_intention_edit.text,
+		{
+			"id": "initial-intention",
+			"ariaLabel": "世界初始意图",
+			"maxChars": INITIAL_INTENTION_MAX_CHARS,
+			"language": "zh-CN",
+			"color": "#55361f",
+			"caretColor": "#b64b2d",
+			"background": "#f8dca2",
+			"border": "2px solid #dc9829",
+		},
+	)
+	if opened:
+		_refresh_initial_intention_web_input.call_deferred()
+	return opened
+
+
+func _close_initial_intention_web_input() -> void:
+	if _initial_intention_web_input != null:
+		_initial_intention_web_input.close()
+
+
+func _refresh_initial_intention_web_input() -> void:
+	if _initial_intention_web_input != null and _initial_intention_web_input.is_open():
+		_initial_intention_web_input.refresh_rect()
+
+
+func _sync_initial_intention_from_web() -> void:
+	if _initial_intention_web_input == null or not _initial_intention_web_input.is_open():
+		return
+	var value := _initial_intention_web_input.get_text()
+	if _initial_intention_edit.text != value:
+		_initial_intention_edit.text = value
+		_on_initial_intention_text_changed()
+
+
 func _update_initial_intention_counter() -> void:
 	if _initial_intention_counter != null and _initial_intention_edit != null:
 		_initial_intention_counter.text = "%d / %d" % [
@@ -755,10 +822,14 @@ func _update_initial_intention_counter() -> void:
 
 
 func _request_save_initial_intention() -> void:
+	_sync_initial_intention_from_web()
 	var text_value := _initial_intention_edit.text.strip_edges()
 	if text_value.is_empty():
 		reject_initial_intention_request("请填写初始意图。")
-		_initial_intention_edit.grab_focus()
+		if _initial_intention_web_input != null and _initial_intention_web_input.is_open():
+			_initial_intention_web_input.focus()
+		else:
+			_initial_intention_edit.grab_focus()
 		return
 	_initial_intention_save_button.disabled = true
 	initial_intention_requested.emit({
@@ -1771,6 +1842,7 @@ func _apply_responsive_layout() -> void:
 		_layout_queued = false
 		return
 	_apply_responsive_layout_for_size(get_viewport_rect().size)
+	_refresh_initial_intention_web_input()
 	_layout_queued = false
 
 

@@ -5924,6 +5924,23 @@ func _scenario_game_flow_resident_model_assignment_route() -> void:
 			true,
 			false,
 		) as Button
+		var web_input_bridge_script := load(
+			"res://ui/common/WebTextInputBridge.gd",
+		) as Script
+		_expect(web_input_bridge_script != null, "initial intention ships the Web text input bridge")
+		if web_input_bridge_script != null:
+			var scaled_rect := web_input_bridge_script.call(
+				"scaled_css_rect",
+				Rect2(100, 50, 400, 200),
+				Vector2(1280, 720),
+				Rect2(10, 20, 1920, 1080),
+			) as Rect2
+			_expect_equal(scaled_rect, Rect2(160, 95, 600, 300), "Web input follows canvas scaling")
+			var native_bridge: RefCounted = web_input_bridge_script.new()
+			_expect(
+				not bool(native_bridge.call("open", intention_edit, "测试中文", {})),
+				"non-Web runtime keeps the native TextEdit path",
+			)
 		_expect(
 			intention_backdrop != null and intention_backdrop.is_visible_in_tree(),
 			"initial intention form opens above the completion modal",
