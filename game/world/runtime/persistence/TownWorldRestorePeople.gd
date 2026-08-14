@@ -13,6 +13,9 @@ const SAVE_CODEC := preload("res://world/runtime/persistence/TownWorldSaveCodec.
 const CHARACTER_MOVEMENT_QUERY := preload(
 	"res://world/data/town/TownWorldCharacterMovementQuery.gd"
 )
+const RESIDENT_ARRIVAL_RUNTIME := preload(
+	"res://world/runtime/TownResidentArrivalRuntime.gd"
+)
 const RESIDENT_CONDITION_RUNTIME := preload(
 	"res://world/runtime/condition/TownResidentConditionRuntime.gd"
 )
@@ -184,7 +187,9 @@ static func prepare(
 		if typeof(resident_value) != TYPE_DICTIONARY:
 			errors.append("世界存档 residents[%d] 必须是对象" % index)
 			continue
-		var saved := resident_value as Dictionary
+		var saved := _with_legacy_arrival_action_registration(
+			resident_value as Dictionary,
+		)
 		var expected_resident_fields := SAVED_RESIDENT_FIELDS.duplicate()
 		if requires_activity_state:
 			expected_resident_fields.append("activityState")
@@ -252,6 +257,35 @@ static func prepare(
 		"residentOrder": restored_ids,
 		"playerAvatar": restored_avatar,
 	}
+
+
+static func _with_legacy_arrival_action_registration(
+	saved: Dictionary,
+) -> Dictionary:
+	var normalized := saved.duplicate(true)
+	var resident_id := String(normalized.get("residentId", "")).strip_edges()
+	var action_value: Variant = normalized.get("currentAction")
+	var used_ids_value: Variant = normalized.get("usedActionIds")
+	if not action_value is Dictionary or not used_ids_value is Array:
+		return normalized
+	var action := action_value as Dictionary
+	var action_id := String(action.get("action_id", "")).strip_edges()
+	if (
+		resident_id.is_empty()
+		or action_id.is_empty()
+		or String(action.get("type", "")) != "待着"
+		or action.get("decisionBridge") != true
+		or not RESIDENT_ARRIVAL_RUNTIME.is_entry_continuity_action_id(
+			resident_id,
+			action_id,
+		)
+	):
+		return normalized
+	var used_ids := (used_ids_value as Array).duplicate()
+	if not used_ids.has(action_id):
+		used_ids.append(action_id)
+		normalized["usedActionIds"] = used_ids
+	return normalized
 
 
 static func _validate_saved_resident(

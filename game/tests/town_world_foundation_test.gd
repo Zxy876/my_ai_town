@@ -2852,11 +2852,69 @@ func _scenario_staggered_arrival() -> void:
 					null,
 					"the local arrival bridge does not replace the resident's first OC decision",
 				)
+			var arrival_save := world.call(
+				"prepare_save_candidate",
+			) as Dictionary
 			_expect_equal(
-				(world.call("create_save_snapshot") as Dictionary).get("ok"),
+				arrival_save.get("ok"),
 				true,
-				"the arrival decision bridge remains saveable",
+				"the arrival decision bridge remains restorable: %s"
+				% JSON.stringify(arrival_save),
 			)
+			if arrival_save.get("ok") == true:
+				var candidate := arrival_save.get("candidate", {}) as Dictionary
+				var token := String(candidate.get("token", ""))
+				var legacy_snapshot := (
+					arrival_save.get("snapshot", {}) as Dictionary
+				).duplicate(true)
+				var legacy_residents := (
+					(legacy_snapshot.get("state", {}) as Dictionary).get(
+						"residents",
+						[],
+					) as Array
+				)
+				for saved_value: Variant in legacy_residents:
+					var saved_resident := saved_value as Dictionary
+					if String(saved_resident.get("residentId", "")) != String(
+						arrival_resident.get("residentId", ""),
+					):
+						continue
+					var legacy_ids := saved_resident.get(
+						"usedActionIds",
+						[],
+					) as Array
+					legacy_ids.erase(String(arrival_action.get("action_id", "")))
+				var legacy_world: RefCounted = WORLD.new()
+				var legacy_restore := legacy_world.call(
+					"restore_from_snapshot",
+					world_data,
+					opening,
+					legacy_snapshot,
+					identities,
+				) as Dictionary
+				_expect_equal(
+					legacy_restore.get("ok"),
+					true,
+					"a legacy arrival bridge save repairs its missing action registration: %s"
+					% JSON.stringify(legacy_restore),
+				)
+				if legacy_restore.get("ok") == true:
+					var restored_resident := (
+						legacy_world.call("residents") as Dictionary
+					).get(
+						String(arrival_resident.get("residentId", "")),
+						{},
+					) as Dictionary
+					_expect_equal(
+						(restored_resident.get("usedActionIds", {}) as Dictionary).has(
+							String(arrival_action.get("action_id", "")),
+						),
+						true,
+						"the repaired arrival action registration survives restore",
+					)
+				legacy_world.call("stop")
+				world.call("abort_save_candidate", token)
+				world.call("cleanup_save_candidate", token)
 	_expect_equal(
 		_present_states(
 			world.call("get_all_resident_states") as Array,
