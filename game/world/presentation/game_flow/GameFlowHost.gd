@@ -1741,6 +1741,9 @@ func _on_startup_intent_requested(intent: StringName, payload: Dictionary) -> vo
 				_last_result = _failure("SESSION_CONTINUE_FORMAL_ONLY", false)
 			else:
 				var slot_id := String(payload.get("slotId", "")).strip_edges()
+				var next_global_intention_text := String(
+					payload.get("nextGlobalIntentionText", ""),
+				).strip_edges()
 				if slot_id.is_empty():
 					_last_result = _failure("STARTUP_SAVE_SLOT_ID_INVALID", false)
 					return
@@ -1751,6 +1754,8 @@ func _on_startup_intent_requested(intent: StringName, payload: Dictionary) -> vo
 					slot_id,
 					bool(payload.get("recoveryConfirmed", false))
 						or String(intent) == "session.confirm_recovery",
+					"",
+					next_global_intention_text,
 				)
 		"startup.back":
 			request_quit_game()
@@ -2075,10 +2080,16 @@ func _open_new_game_overwrite(
 func _open_continue_recovery(
 	discovery: Dictionary,
 	route_origin := "continue",
+	next_global_intention_text := "",
 ) -> void:
+	var continuation_payload := {}
+	if not next_global_intention_text.strip_edges().is_empty():
+		continuation_payload["nextGlobalIntentionText"] = (
+			next_global_intention_text.strip_edges()
+		)
 	_open_save_handling(
 		"continue_recovery",
-		{},
+		continuation_payload,
 		discovery,
 		route_origin,
 	)
@@ -2168,6 +2179,7 @@ func _on_new_game_overwrite_intent_requested(
 		"session.retry_restore", "session.confirm_recovery":
 			var recovery_mode := _pending_save_handling_mode
 			var route_origin := _pending_save_handling_origin
+			var recovery_payload := _pending_new_game_payload.duplicate(true)
 			var summary := (
 				_pending_new_game_discovery.get("summary", {}) as Dictionary
 			).duplicate(true)
@@ -2179,6 +2191,9 @@ func _on_new_game_overwrite_intent_requested(
 				String(summary.get("slotId", "")),
 				recovery_mode == "continue_recovery",
 				route_origin,
+				String(
+					recovery_payload.get("nextGlobalIntentionText", ""),
+				).strip_edges(),
 			)
 		"session.overwrite_for_new_game":
 			_confirm_new_game_overwrite()
@@ -4912,6 +4927,7 @@ func _start_formal_continue(
 	requested_slot_id := "",
 	recovery_confirmed := false,
 	route_kind_override := "",
+	next_global_intention_text := "",
 ) -> void:
 	if generation != _flow_generation:
 		return
@@ -4935,6 +4951,7 @@ func _start_formal_continue(
 			"load_game"
 			if not String(requested_slot_id).strip_edges().is_empty()
 			else "continue",
+			next_global_intention_text,
 		)
 		return
 	var route_kind := route_kind_override.strip_edges()
@@ -4950,6 +4967,7 @@ func _start_formal_continue(
 		"startup_load_game" if route_kind == "load_game" else "startup",
 		{
 			"slotId": String(requested_slot_id).strip_edges(),
+			"nextGlobalIntentionText": next_global_intention_text,
 			"intent": (
 				"session.continue_slot"
 				if route_kind == "load_game"
@@ -5009,8 +5027,7 @@ func _start_formal_continue(
 		_publish_startup_result(provider_configuration)
 		return
 	_advance_town_entry_loading(0.34, "正在检查居民连接…")
-	var health_started := _provider_service.call(
-		"request_health_check",
+	var health_started := _provider_service.request_health_check(
 		bindings.duplicate(true),
 		Callable(self, "_on_formal_continue_provider_health_completed").bind(
 			generation,
@@ -5019,6 +5036,7 @@ func _start_formal_continue(
 			identities.duplicate(true),
 			bindings.duplicate(true),
 			resident_names.duplicate(),
+			next_global_intention_text,
 		),
 	) as Dictionary
 	if not bool(health_started.get("accepted", false)):
@@ -5033,6 +5051,7 @@ func _on_formal_continue_provider_health_completed(
 	identities: Array,
 	bindings: Array,
 	resident_names: Array,
+	next_global_intention_text: String,
 ) -> void:
 	if generation != _flow_generation:
 		return
@@ -5171,13 +5190,47 @@ func _on_formal_continue_provider_health_completed(
 			_discard_pending_runtime()
 			_publish_startup_result(completion)
 			return
-	restored_session_config["restorePending"] = false
-	restored_session_config["saveRevision"] = int(
+	var active_save_revision := int(
 		(restored.get("context", {}) as Dictionary).get(
 			"save_revision",
 			restore_revision,
-		)
+		),
 	)
+	var continuation_text := next_global_intention_text.strip_edges()
+	if not continuation_text.is_empty():
+		_advance_town_entry_loading(0.92, "正在写入下一版共同意图…")
+		var continuation := _gateway.stage_global_intent_after_restore(
+			{
+				"text": continuation_text,
+				"sessionId": session_id,
+				"sourceSaveRevision": active_save_revision,
+			},
+		) as Dictionary
+		if not bool(continuation.get("ok", false)):
+			_discard_pending_runtime()
+			_publish_startup_result(continuation)
+			return
+		restored["globalIntentContinuation"] = continuation.duplicate(true)
+		if bool(continuation.get("changed", false)):
+			var continuation_save := restore_service.create_save({
+				"reason": "global_intent_continuation",
+			}) as Dictionary
+			if not bool(continuation_save.get("ok", false)):
+				_discard_pending_runtime()
+				_publish_startup_result(continuation_save)
+				return
+			active_save_revision = int(
+				(continuation_save.get("context", {}) as Dictionary).get(
+					"save_revision",
+					active_save_revision,
+				),
+			)
+			restored["continuationSave"] = continuation_save.duplicate(true)
+			var dispatch := _gateway.dispatch_pending_global_intent() as Dictionary
+			if not bool(dispatch.get("ok", false)):
+				restored["globalIntentDispatchWarning"] = dispatch.duplicate(true)
+	restored_session_config["restorePending"] = false
+	restored_session_config["saveRevision"] = active_save_revision
 	restored_session_config["identityStatus"] = "confirmed"
 	_active_session_config = restored_session_config.duplicate(true)
 	_pending_continue_notice = (
@@ -5430,6 +5483,7 @@ func _complete_in_session_load_game(
 		slot_id,
 		recovery_confirmed,
 		"load_game",
+		String(payload.get("nextGlobalIntentionText", "")).strip_edges(),
 	)
 
 

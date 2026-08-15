@@ -8,7 +8,7 @@ const OUTCOMES: Array[String] = [
 ]
 const MAX_TEXT_CHARS := 2000
 const MAX_PENDING_PER_RESIDENT := 32
-const MAX_AUDIT_RECORDS := 512
+const MAX_AUDIT_RECORDS := 4096
 const STATE_VERSION := 1
 const RECORD_STATUSES: Array[String] = [
 	"committed", "injected", "stored", "perceived", "failed", "ineffective",

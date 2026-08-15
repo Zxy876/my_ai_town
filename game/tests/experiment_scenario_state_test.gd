@@ -8,7 +8,10 @@ const TestData := preload("res://tests/support/AgentMemoryTestData.gd")
 
 
 func _initialize() -> void:
-	var residents: Array[String] = ["resident-lin-lan"]
+	var residents: Array[String] = [
+		"resident-lin-lan",
+		"resident-xu-zhao",
+	]
 	var definition := {
 		"scenarioId": "hospital-intention-v1",
 		"episodeId": "common-root",
@@ -127,6 +130,118 @@ func _initialize() -> void:
 		(restored.call("audit_snapshot") as Dictionary).get("scenario"),
 		scenario,
 		"restore preserves Scenario and Episode identity",
+	)
+	var legacy_state := (
+		capture.get("experimentState", {}) as Dictionary
+	).duplicate(true)
+	legacy_state["stateVersion"] = 1
+	(legacy_state.get("scenario", {}) as Dictionary).erase("u0Continuations")
+	var legacy_restored: RefCounted = EXPERIMENT.new()
+	_expect_ok(legacy_restored.call(
+		"apply_state",
+		legacy_state,
+		residents,
+	), "pre-versioning Scenario saves migrate without rewriting U0@v0")
+	_expect_equal(
+		((legacy_restored.call("capture_state") as Dictionary)
+			.get("experimentState", {}) as Dictionary).get("stateVersion"),
+		2,
+		"legacy Scenario state is normalized to the versioned format",
+	)
+
+	var missing_baseline: RefCounted = EXPERIMENT.new()
+	var rejected_continuation := missing_baseline.call(
+		"append_global_intent_after_restore",
+		{
+			"text": "没有基线时不应创建下一版。",
+			"sessionId": "session-test",
+			"sourceSaveRevision": 1,
+		},
+		residents,
+		{"day": 1, "hour": 12, "minute": 0},
+	) as Dictionary
+	_expect_equal(
+		rejected_continuation.get("errorCode"),
+		"GLOBAL_INTENT_CONTINUATION_BASELINE_MISSING",
+		"U0@v1 requires an activated U0@v0 save boundary",
+	)
+
+	var next_intention := "下一版共同意图：诊所改为先分诊，再按轻重缓急安排照料。"
+	var continuation := restored.call(
+		"append_global_intent_after_restore",
+		{
+			"text": next_intention,
+			"sessionId": "session-test",
+			"sourceSaveRevision": 1,
+		},
+		residents,
+		{"day": 2, "hour": 9, "minute": 30},
+	) as Dictionary
+	_expect_ok(continuation, "a restored stable baseline accepts U0@v1")
+	var next_version := continuation.get("version", {}) as Dictionary
+	_expect_equal(next_version.get("versionNumber"), 1, "first continuation is U0@v1")
+	_expect(
+		String(next_version.get("parentVersionId", "")).begins_with("u0-v0-"),
+		"U0@v1 records U0@v0 as its parent",
+	)
+	_expect_equal(
+		(next_version.get("deliveries", []) as Array).size(),
+		residents.size(),
+		"one continuation creates one global delivery per resident",
+	)
+	var duplicate_continuation := restored.call(
+		"append_global_intent_after_restore",
+		{
+			"text": next_intention,
+			"sessionId": "session-test",
+			"sourceSaveRevision": 1,
+		},
+		residents,
+		{"day": 2, "hour": 9, "minute": 30},
+	) as Dictionary
+	_expect_equal(
+		duplicate_continuation.get("changed"),
+		false,
+		"repeating the current intention does not create another version",
+	)
+	var continuation_capture := restored.call("capture_state") as Dictionary
+	var continuation_restored: RefCounted = EXPERIMENT.new()
+	_expect_ok(continuation_restored.call(
+		"apply_state",
+		continuation_capture.get("experimentState"),
+		residents,
+	), "U0@v1 and its pending global deliveries cross the save boundary")
+	var continuation_summary := continuation_restored.call(
+		"global_intent_summary",
+	) as Dictionary
+	_expect_equal(continuation_summary.get("versionNumber"), 1, "restored current version remains U0@v1")
+	_expect_equal(continuation_summary.get("rawText"), next_intention, "restored version retains natural language")
+	for resident_id: String in residents:
+		var version_decision_id := "continued-%s" % resident_id
+		var version_attachment := continuation_restored.call(
+			"attach_to_wake",
+			resident_id,
+			version_decision_id,
+			TestData.wake_packet(version_decision_id),
+		) as Dictionary
+		_expect_ok(version_attachment, "restored continuation attaches to %s" % resident_id)
+		var version_payloads := (
+			version_attachment.get("wakePacket", {}) as Dictionary
+		).get("runtime_observations", []) as Array
+		_expect_equal(version_payloads.size(), 1, "each resident receives U0@v1 exactly once")
+		_expect_equal(
+			String((version_payloads[0] as Dictionary).get("text", "")),
+			next_intention,
+			"the player-authored intention reaches resident cognition as a fact",
+		)
+		continuation_restored.call("mark_stored", version_decision_id)
+		continuation_restored.call("mark_result", version_decision_id, true)
+	_expect_equal(
+		(continuation_restored.call("audit_snapshot", u0_id) as Dictionary).get(
+			"rootMemoryId",
+		),
+		"memory-u0-root",
+		"U0@v1 does not overwrite the original U0@v0 memory root",
 	)
 
 	var pending: RefCounted = EXPERIMENT.new()

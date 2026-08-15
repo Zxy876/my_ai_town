@@ -4660,6 +4660,48 @@ func _test_startup_load_focus_stability() -> void:
 			rebuilt_second_action,
 			"存档后台刷新保留当前存档按钮焦点",
 		)
+	var continue_intents: Array[Dictionary] = []
+	screen.connect(
+		"intent_requested",
+		func(intent: StringName, payload: Dictionary) -> void:
+			continue_intents.append({
+				"intent": String(intent),
+				"payload": payload.duplicate(true),
+			}),
+	)
+	_expect(
+		bool(screen.call("debug_request_slot", "slot-a")),
+		"点击可继续存档先打开下一版共同意图入口",
+	)
+	var intention_backdrop := screen.find_child(
+		"ContinueIntentionBackdrop",
+		true,
+		false,
+	) as Control
+	_expect(
+		intention_backdrop != null and intention_backdrop.visible,
+		"加载存档页显示下一版共同意图文本框",
+	)
+	var next_intention := "下一版共同意图：先分诊，再安排照料。"
+	_expect(
+		bool(screen.call("debug_confirm_pending_slot", next_intention)),
+		"玩家可以带着下一版共同意图进入已有小镇",
+	)
+	_expect_equal(continue_intents.size(), 1, "加载意图只提交一次")
+	if not continue_intents.is_empty():
+		var submitted := continue_intents[0]
+		_expect_equal(
+			submitted.get("intent"),
+			"session.continue_slot",
+			"下一版共同意图沿用正式加载存档入口",
+		)
+		_expect_equal(
+			(submitted.get("payload", {}) as Dictionary).get(
+				"nextGlobalIntentionText",
+			),
+			next_intention,
+			"自然语言原文从玩家入口进入加载管线",
+		)
 	root.remove_child(screen)
 	screen.free()
 

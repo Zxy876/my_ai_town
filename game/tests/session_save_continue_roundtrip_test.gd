@@ -310,12 +310,67 @@ func _run() -> void:
 		"town",
 		"恢复完成后正式小镇保持可见室外视图",
 	)
+	var next_global_intention := "下一版共同意图：诊所先分诊，再按轻重缓急安排照料。"
+	var continuation := restore_gateway.call(
+		"stage_global_intent_after_restore",
+		{
+			"text": next_global_intention,
+			"sessionId": session_id,
+			"sourceSaveRevision": 1,
+		},
+	) as Dictionary
+	_expect_ok(continuation, "恢复后可在同一小镇建立下一版共同意图")
+	_expect_equal(
+		((continuation.get("version", {}) as Dictionary).get(
+			"deliveries",
+		[]) as Array).size(),
+		identities.size(),
+		"下一版共同意图一次覆盖全部居民",
+	)
+	var continued_experiment := restore_gateway.call(
+		"capture_experiment_state",
+	) as Dictionary
+	_expect_ok(continued_experiment, "下一版共同意图可进入联合存档")
+	var continued_session_config := session_config.duplicate(true)
+	continued_session_config["mode"] = "continue"
+	continued_session_config["experimentState"] = (
+		continued_experiment.get("experimentState", {}) as Dictionary
+	).duplicate(true)
+	var continued_save := restore_coordinator.call("save", {
+		"slotId": slot_id,
+		"sessionId": session_id,
+		"residentIdentities": identities.duplicate(true),
+		"sessionConfig": continued_session_config,
+		"savedAt": Time.get_datetime_string_from_system(false, false),
+		"residentMessages": [],
+	}) as Dictionary
+	_expect_ok(continued_save, "下一版共同意图先形成新的完整存档修订")
+	var continued_context := continued_save.get("context", {}) as Dictionary
+	_expect_equal(
+		continued_context.get("save_revision"),
+		2,
+		"U0@v1 建立明确的新修订边界",
+	)
+	_expect_ok(
+		restore_gateway.call("dispatch_pending_global_intent") as Dictionary,
+		"新修订发布后再唤醒居民处理共同意图",
+	)
+	var latest_continued := restore_coordinator.call(
+		"discover_latest",
+		slot_id,
+	) as Dictionary
+	_expect_ok(latest_continued, "U0@v1 修订成为该小镇的最新存档")
+	_expect_equal(
+		(latest_continued.get("summary", {}) as Dictionary).get("saveRevision"),
+		2,
+		"重新加载时会从 U0@v1 的存档边界继续",
+	)
 
 	var cleanup_agent := restored_agent
 	restored_runtime.queue_free()
 	await _wait_frames(4)
 	_expect_ok(
-		cleanup_agent.call("delete_game", context) as Dictionary,
+		cleanup_agent.call("delete_game", continued_context) as Dictionary,
 		"闭环测试居民存档可清理",
 	)
 	_expect_ok(store.call("cleanup_test_root") as Dictionary, "闭环测试世界存档可清理")

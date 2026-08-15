@@ -1147,6 +1147,36 @@ func capture_experiment_state() -> Dictionary:
 	return _runtime_observations.capture_state() as Dictionary
 
 
+func stage_global_intent_after_restore(request: Dictionary) -> Dictionary:
+	if not _session_active or _world == null:
+		return _failure("AGENT_GATEWAY_SESSION_INACTIVE", false)
+	var prepared := request.duplicate(true)
+	var current_context := _agent_system.get_save_context() as Dictionary
+	prepared["sessionId"] = String(
+		prepared.get("sessionId", current_context.get("session_id", "")),
+	)
+	prepared["sourceSaveRevision"] = int(
+		prepared.get(
+			"sourceSaveRevision",
+			current_context.get("save_revision", 0),
+		),
+	)
+	var world_time: Dictionary = {}
+	if _world.has_method("get_time"):
+		world_time = (_world.get_time() as Dictionary).duplicate(true)
+	return _runtime_observations.append_global_intent_after_restore(
+		prepared,
+		_connected_resident_ids,
+		world_time,
+	) as Dictionary
+
+
+func dispatch_pending_global_intent() -> Dictionary:
+	if not _session_active or _world == null:
+		return _failure("AGENT_GATEWAY_SESSION_INACTIVE", false)
+	return _request_pending_runtime_observation_wakes()
+
+
 func queue_runtime_observation(request: Dictionary) -> Dictionary:
 	if not _session_active or _world == null:
 		return _failure("AGENT_GATEWAY_SESSION_INACTIVE", false)
@@ -2292,9 +2322,12 @@ func _round_robin_requests(
 	return result
 
 
-func _request_pending_runtime_observation_wakes() -> void:
+func _request_pending_runtime_observation_wakes() -> Dictionary:
 	if _world == null or not _world.has_method("request_runtime_observation_wake"):
-		return
+		return _failure("WORLD_RUNTIME_OBSERVATION_WAKE_MISSING", false)
+	var scheduled_resident_ids: Array[String] = []
+	var deferred_resident_ids: Array[String] = []
+	var failures: Array[Dictionary] = []
 	for resident_id: String in _runtime_observations.pending_resident_ids():
 		var wake_request := _world.call(
 			"request_runtime_observation_wake",
@@ -2308,11 +2341,29 @@ func _request_pending_runtime_observation_wakes() -> void:
 				),
 			)
 			if error_code == "RUNTIME_OBSERVATION_TARGET_UNAVAILABLE":
+				deferred_resident_ids.append(resident_id)
 				continue
 			_runtime_observations.mark_pending_failed(
 				resident_id,
 				error_code,
 			)
+			failures.append({
+				"residentId": resident_id,
+				"errorCode": error_code,
+				"retryable": bool(wake_request.get("retryable", false)),
+			})
+			continue
+		scheduled_resident_ids.append(resident_id)
+	return {
+		"ok": failures.is_empty(),
+		"errorCode": (
+			"" if failures.is_empty() else "RUNTIME_OBSERVATION_WAKE_FAILED"
+		),
+		"retryable": false,
+		"scheduledResidentIds": scheduled_resident_ids,
+		"deferredResidentIds": deferred_resident_ids,
+		"failures": failures,
+	}
 
 
 func _prioritize_conversation_requests(
