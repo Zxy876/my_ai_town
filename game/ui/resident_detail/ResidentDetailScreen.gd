@@ -25,6 +25,7 @@ enum LayoutProfile {
 
 
 const UiViewModel := preload("res://ui/common/AiTownUiViewModel.gd")
+const WebInputBridge := preload("res://ui/common/WebTextInputBridge.gd")
 const TAB_SCENE := preload(
 	"res://ui/resident_detail/components/ResidentDetailTabButton.tscn"
 )
@@ -39,39 +40,39 @@ const METER_SCENE := preload(
 )
 const BACKGROUND_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "resident_detail_background.png"
+	+"resident_detail_background.png"
 )
 const STATUS_DETAIL_PANEL_TEXTURE := preload(
 	"res://assets/ui/common/runtime/paper_wood_panel/"
-	+ "paper_wood_panel_master_v1_512.png"
+	+"paper_wood_panel_master_v1_512.png"
 )
 const RELATIONSHIP_BACKGROUND_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "relationship_page_clean_v4.png"
+	+"relationship_page_clean_v4.png"
 )
 const MEMORY_BACKGROUND_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "memory_page_clean_v4.png"
+	+"memory_page_clean_v4.png"
 )
 const MEMORY_OPERATION_BACKGROUND_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "memory_operation_page_clean_v5.png"
+	+"memory_operation_page_clean_v5.png"
 )
 const RELATIONSHIP_ROW_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "relationship_row_exact_v3.png"
+	+"relationship_row_exact_v3.png"
 )
 const MEMORY_ROW_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "memory_row_exact_v3.png"
+	+"memory_row_exact_v3.png"
 )
 const SCROLLBAR_TRACK_TEXTURE := preload(
 	"res://assets/ui/common/scrollbar/wood_v1/variants/dropdown_short/"
-	+ "scrollbar_track_wood_v1_dropdown_short.png"
+	+"scrollbar_track_wood_v1_dropdown_short.png"
 )
 const SCROLLBAR_THUMB_TEXTURE := preload(
 	"res://assets/ui/common/scrollbar/wood_v1/variants/dropdown_short/"
-	+ "scrollbar_thumb_wood_v1_dropdown_short.png"
+	+"scrollbar_thumb_wood_v1_dropdown_short.png"
 )
 const PAGE_THEME := preload(
 	"res://ui/resident_detail/components/ResidentDetailReferenceTypography.tres"
@@ -327,6 +328,7 @@ var _runtime_observation_id := ""
 var _content_scroll_chrome: Control
 var _selected_memory_scroll_chrome: Control
 var _memory_input_scroll_chrome: Control
+var _memory_operation_web_input: WebTextInputBridge
 var _wood_scroll_chromes: Array[Dictionary] = []
 var _wood_scroll_refresh_queued := false
 var _status_detail_backdrop: Control
@@ -377,6 +379,7 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	_close_memory_operation_web_input()
 	_disconnect_adapter()
 
 
@@ -447,7 +450,7 @@ func bind_town_ui_adapter(adapter: Object) -> void:
 	_adapter = adapter
 	_reset_view_model_state()
 	if _adapter != null and _adapter.has_signal("view_model_changed"):
-		var callback := Callable(self, "_on_view_model_changed")
+		var callback := Callable(self , _on_view_model_changed)
 		if not _adapter.is_connected("view_model_changed", callback):
 			_adapter.connect("view_model_changed", callback)
 	if not is_node_ready():
@@ -765,7 +768,7 @@ func _build_interface() -> void:
 	_content_root.mouse_filter = Control.MOUSE_FILTER_PASS
 	_content_scroll.add_child(_content_root)
 	_content_scroll_chrome = _build_wood_scroll_chrome(
-		self,
+		self ,
 		"ContentWoodScrollbar",
 		_content_scroll.get_v_scroll_bar(),
 	)
@@ -888,6 +891,17 @@ func _build_memory_operation_panel() -> void:
 			input_style.duplicate(),
 		)
 	_memory_operation_root.add_child(_memory_operation_input)
+
+	_memory_operation_web_input = WebInputBridge.new()
+	_memory_operation_web_input.text_changed.connect(
+		_on_memory_operation_web_text_changed,
+	)
+	_memory_operation_web_input.cancel_requested.connect(
+		_close_memory_operation_panel,
+	)
+	_memory_operation_input.resized.connect(
+		_refresh_memory_operation_web_input_rect,
+	)
 
 	_memory_operation_hint = _make_label(
 		"MemoryOperationHint", 19, Color("806a5b"), HORIZONTAL_ALIGNMENT_CENTER, 3,
@@ -1066,6 +1080,61 @@ func _set_wood_scrollbar_from_y(
 
 func _on_memory_input_text_changed() -> void:
 	_queue_wood_scrollbar_refresh()
+
+
+func _on_memory_operation_web_text_changed(value: String) -> void:
+	if (
+		_memory_operation_input != null
+		and _memory_operation_input.text != value
+	):
+		_memory_operation_input.text = value
+
+
+func _open_memory_operation_web_input() -> bool:
+	if _memory_operation_web_input == null or not OS.has_feature("web"):
+		return false
+	_memory_operation_input.release_focus()
+	var opened := _memory_operation_web_input.open(
+		_memory_operation_input,
+		_memory_operation_input.text,
+		{
+			"id": "resident-detail-memory-operation-%s" % _runtime_observation_id,
+			"ariaLabel": "观察内容",
+			"maxChars": 2000,
+			"language": "zh-CN",
+			"color": "#3f2818",
+			"caretColor": "#6c3d20",
+			"background": "#edc98f",
+			"border": "2px solid #bd8750",
+		},
+	)
+	if opened:
+		_refresh_memory_operation_web_input_rect.call_deferred()
+	return opened
+
+
+func _close_memory_operation_web_input() -> void:
+	if _memory_operation_web_input != null:
+		_memory_operation_web_input.close()
+
+
+func _refresh_memory_operation_web_input_rect() -> void:
+	if (
+		_memory_operation_web_input != null
+		and _memory_operation_web_input.is_open()
+	):
+		_memory_operation_web_input.refresh_rect()
+
+
+func _sync_memory_operation_from_web() -> void:
+	if (
+		_memory_operation_web_input == null
+		or not _memory_operation_web_input.is_open()
+	):
+		return
+	var value := _memory_operation_web_input.get_text()
+	if _memory_operation_input.text != value:
+		_memory_operation_input.text = value
 
 
 func _render() -> void:
@@ -1318,7 +1387,8 @@ func _open_memory_change_dialog(_operation := "u0") -> void:
 	_apply_page_background("memories")
 	_refresh_memory_operation_copy()
 	_apply_responsive_layout()
-	_memory_operation_input.grab_focus.call_deferred()
+	if not _open_memory_operation_web_input():
+		_memory_operation_input.grab_focus.call_deferred()
 
 
 func _close_memory_operation_panel() -> void:
@@ -1326,6 +1396,7 @@ func _close_memory_operation_panel() -> void:
 		return
 	_memory_operation_visible = false
 	_runtime_observation_id = ""
+	_close_memory_operation_web_input()
 	_apply_page_background(str(_render_data.get("selectedTab", "memories")))
 	_apply_responsive_layout()
 	_update_focus_chain()
@@ -1401,14 +1472,31 @@ func _refresh_memory_operation_copy() -> void:
 
 
 func _confirm_memory_operation() -> void:
+	if (
+		_memory_operation_web_input != null
+		and _memory_operation_web_input.is_open()
+	):
+		_sync_memory_operation_from_web()
 	var observation_text := _memory_operation_input.text
 	if observation_text.strip_edges().is_empty():
 		_memory_operation_hint.text = "观察内容不能为空。"
-		_memory_operation_input.grab_focus()
+		if (
+			_memory_operation_web_input != null
+			and _memory_operation_web_input.is_open()
+		):
+			_memory_operation_web_input.focus()
+		else:
+			_memory_operation_input.grab_focus()
 		return
 	if observation_text.length() > 2000:
 		_memory_operation_hint.text = "观察内容不能超过 2000 字。"
-		_memory_operation_input.grab_focus()
+		if (
+			_memory_operation_web_input != null
+			and _memory_operation_web_input.is_open()
+		):
+			_memory_operation_web_input.focus()
+		else:
+			_memory_operation_input.grab_focus()
 		return
 	if _request_action("observeRuntime", {
 		"observationId": _runtime_observation_id,
@@ -1509,7 +1597,7 @@ func _render_content() -> void:
 		)
 		empty.text = (
 			"居民公开详情暂不可用。\n"
-			+ "可查看的居民资料尚未准备好。"
+			+"可查看的居民资料尚未准备好。"
 		)
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		var empty_rect := _empty_content_local_rect()
@@ -2302,7 +2390,7 @@ func _relationship_portrait_path(item: Dictionary) -> String:
 		return ""
 	return (
 		"res://assets/characters/resident_2d_rig_v1/wardrobe_v1/"
-		+ "classic_sets/runtime_portraits/%s_front.png" % "_".join(parts)
+		+"classic_sets/runtime_portraits/%s_front.png" % "_".join(parts)
 	)
 
 
@@ -2617,6 +2705,7 @@ func _apply_responsive_layout() -> void:
 	_render_content()
 	_apply_memory_operation_visibility()
 	_layout_memory_operation_panel()
+	_refresh_memory_operation_web_input_rect()
 
 
 func _apply_wide_geometry(viewport_size: Vector2) -> void:
@@ -3255,7 +3344,7 @@ func _refresh_from_adapter() -> void:
 func _disconnect_adapter() -> void:
 	UI_SIGNALS.disconnect_view_model(
 		_adapter,
-		Callable(self, "_on_view_model_changed"),
+		Callable(self , _on_view_model_changed),
 	)
 
 
