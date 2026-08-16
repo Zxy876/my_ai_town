@@ -440,6 +440,98 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 			_safe(person.get("doing", "")),
 			"（正在参与其他对话，当前不能搭话）" if not bool(person.get("available_for_conversation", true)) else "",
 		])
+		var details: Array[String] = []
+		var current_place_text := String(person.get("current_place", ""))
+		if not current_place_text.is_empty():
+			details.append("所在%s" % current_place_text)
+		var job_text := String(person.get("job", ""))
+		if not job_text.is_empty():
+			var workplace_text := String(person.get("workplace", ""))
+			details.append(
+				"职业%s%s" % [
+					job_text,
+					"（%s）" % workplace_text if not workplace_text.is_empty() else "",
+				]
+			)
+		var action_summary := String(person.get("current_action_summary", ""))
+		if not action_summary.is_empty():
+			var elapsed := int(person.get("elapsed_minutes", 0))
+			var remaining := int(person.get("estimated_free_in_minutes", 0))
+			var pieces: Array[String] = []
+			pieces.append(action_summary)
+			if elapsed > 0:
+				pieces.append("已进行%d分钟" % elapsed)
+			if remaining > 0:
+				pieces.append("预计%d分钟后结束" % remaining)
+			details.append("、".join(pieces))
+		var partner := String(person.get("active_conversation_with", ""))
+		if not partner.is_empty():
+			details.append("正在与%s交谈" % partner)
+		var nearby_of_nearby := person.get("nearby_of_nearby", []) as Array
+		if not nearby_of_nearby.is_empty():
+			details.append("周围还有%s" % "、".join(nearby_of_nearby))
+		var service_wait := person.get("is_waiting_service", {}) as Dictionary
+		if not service_wait.is_empty():
+			var kind := String(service_wait.get("kind", "服务"))
+			var waited := int(service_wait.get("waited_minutes", 0))
+			var ahead := int(service_wait.get("ahead_count", 0))
+			var in_progress := int(service_wait.get("in_progress_count", 0))
+			var staffed := int(service_wait.get("workers_staffed", 0))
+			var place_for_wait := String(service_wait.get("place_id", ""))
+			var wait_pieces: Array[String] = []
+			wait_pieces.append("正在等待%s" % kind)
+			if not place_for_wait.is_empty():
+				wait_pieces.append("地点%s" % place_for_wait)
+			if waited > 0:
+				wait_pieces.append("已等%d分钟" % waited)
+			wait_pieces.append("前面还有%d人" % ahead)
+			wait_pieces.append("正在处理%d单" % in_progress)
+			wait_pieces.append("在岗%d人" % staffed)
+			details.append("；".join(wait_pieces))
+		if not details.is_empty():
+			lines.append("  %s" % "；".join(details))
+	var town_residents_overview := snapshot.get("town_residents_overview", []) as Array
+	if not town_residents_overview.is_empty():
+		lines.append("其他居民当前状态：")
+		for row_value: Variant in town_residents_overview:
+			var row := row_value as Dictionary
+			var row_line := "- %s（%s）" % [
+				_person(row.get("resident_id", ""), row.get("name", "")),
+				(
+					String(row.get("job", ""))
+					if not String(row.get("job", "")).is_empty()
+					else "无职业"
+				),
+			]
+			var row_place := String(row.get("current_place", ""))
+			if not row_place.is_empty():
+				row_line += "，在%s" % row_place
+			var row_summary := String(row.get("current_action_summary", ""))
+			if not row_summary.is_empty():
+				var row_elapsed := int(row.get("elapsed_minutes", 0))
+				var row_left := int(row.get("estimated_free_in_minutes", 0))
+				row_line += "，%s" % row_summary
+				if row_elapsed > 0:
+					row_line += "（已%d分钟" % row_elapsed
+					if row_left > 0:
+						row_line += "，还有约%d分钟" % row_left
+					row_line += "）"
+			var row_wait := row.get("is_waiting_service", {}) as Dictionary
+			if not row_wait.is_empty():
+				var row_kind := String(row_wait.get("kind", "服务"))
+				var row_ahead := int(row_wait.get("ahead_count", 0))
+				var row_staffed := int(row_wait.get("workers_staffed", 0))
+				var row_waited := int(row_wait.get("waited_minutes", 0))
+				row_line += "；等待%s已%d分，前面%d人，在岗%d人" % [
+					row_kind,
+					row_waited,
+					row_ahead,
+					row_staffed,
+				]
+			var row_partner := String(row.get("active_conversation_with", ""))
+			if not row_partner.is_empty():
+				row_line += "；正在跟%s谈" % row_partner
+			lines.append(row_line)
 	var visible_props := place.get("visible_props", []) as Array
 	lines.append(
 		"眼前可见物件：%s（可见不等于本轮可以操作）。"
