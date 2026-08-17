@@ -175,6 +175,12 @@ jobs:
         run: |
           set -euo pipefail
           ssh_args=(-i "$HOME/.ssh/ai-town-deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          remote_tmp_script="/tmp/ai-town-install-nginx-config.$GITHUB_SHA"
+          scp -i "$HOME/.ssh/ai-town-deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            deploy/tencent/ai-town-install-nginx-config \
+            "$VPS_USER@$VPS_HOST:$remote_tmp_script"
+          ssh "${ssh_args[@]}" "$VPS_USER@$VPS_HOST" \
+            "chmod 755 '$remote_tmp_script' && sudo -n mv '$remote_tmp_script' /usr/local/sbin/ai-town-install-nginx-config && sudo -n chown root:wheel /usr/local/sbin/ai-town-install-nginx-config 2>/dev/null || sudo -n chown root:root /usr/local/sbin/ai-town-install-nginx-config; sudo -n chmod 755 /usr/local/sbin/ai-town-install-nginx-config"
           destination="/opt/maieutic/public/ai-town-releases/$GITHUB_SHA"
           ssh "${ssh_args[@]}" "$VPS_USER@$VPS_HOST" "
             set -eu
