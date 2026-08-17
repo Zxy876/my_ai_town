@@ -16,7 +16,6 @@ const WATCHDOG_INTERVAL_SEC := 0.25
 var _control: Control
 var _tree: SceneTree
 var _watchdog_timer: SceneTreeTimer
-var _watchdog_callback: Callable
 var _element: Variant
 var _input_callback: Variant
 var _keydown_callback: Variant
@@ -229,17 +228,15 @@ func _start_watchdog() -> void:
 		return
 	if _watchdog_timer != null:
 		return
-	_watchdog_callback = Callable(self , _watchdog_tick)
 	_watchdog_timer = _tree.create_timer(WATCHDOG_INTERVAL_SEC, true, false, true)
-	_watchdog_timer.timeout.connect(_watchdog_callback)
+	_watchdog_timer.timeout.connect(_watchdog_tick)
 
 
 func _stop_watchdog() -> void:
 	if _watchdog_timer != null:
-		if _watchdog_callback.is_valid():
-			_watchdog_timer.timeout.disconnect(_watchdog_callback)
+		if _watchdog_timer.timeout.is_connected(_watchdog_tick):
+			_watchdog_timer.timeout.disconnect(_watchdog_tick)
 		_watchdog_timer = null
-	_watchdog_callback = Callable()
 
 
 func _watchdog_tick() -> void:
