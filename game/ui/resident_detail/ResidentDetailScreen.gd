@@ -894,7 +894,7 @@ func _build_memory_operation_panel() -> void:
 		)
 	_memory_operation_root.add_child(_memory_operation_input)
 
-	_memory_operation_web_input = WebInputBridge.new()
+	_memory_operation_web_input = WebInputBridge.new(get_tree())
 	_memory_operation_web_input.text_changed.connect(
 		_on_memory_operation_web_text_changed,
 	)

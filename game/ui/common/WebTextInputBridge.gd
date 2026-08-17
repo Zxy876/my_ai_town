@@ -10,53 +10,41 @@ const ELEMENT_ATTRIBUTE := "data-ai-town-web-input"
 const DEFAULT_FONT_FAMILY := (
 	'"PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
 )
+const WATCHDOG_INTERVAL_SEC := 0.25
 
 
 var _control: Control
+var _tree: SceneTree
+var _watchdog_timer: SceneTreeTimer
+var _watchdog_callback: Callable
 var _element: Variant
 var _input_callback: Variant
 var _keydown_callback: Variant
 var _blur_callback: Variant
+var _focus_callback: Variant
+var _resize_callback: Variant
 var _document_mousedown_callback: Variant
 var _max_chars := 0
 var _element_focused := false
-var _process_token := 0
 
 
-func _init() -> void:
-	if OS.has_feature("web"):
-		set_process(true)
+func _init(tree: SceneTree = null) -> void:
+	_tree = tree
 
 
-func _process(delta: float) -> void:
-	if _element == null:
-		return
-	if not is_instance_valid(_control):
-		close()
-		return
-	if not _control.is_inside_tree():
-		close()
-		return
-	if not _control.is_visible_in_tree():
-		close()
-		return
-	var rect := _control.get_global_rect()
-	var viewport_rect := _control.get_viewport_rect()
-	if rect.position.x + rect.size.x <= 0.0 or rect.position.y + rect.size.y <= 0.0:
-		close()
-		return
-	if (
-		rect.position.x >= viewport_rect.size.x
-		or rect.position.y >= viewport_rect.size.y
-	):
-		close()
-		return
+func is_open() -> bool:
+	return _element != null
 
 
 func open(control: Control, text: String, options: Dictionary = {}) -> bool:
 	close()
 	if not OS.has_feature("web") or not is_instance_valid(control):
 		return false
+	if _tree == null:
+		if control.is_inside_tree():
+			_tree = control.get_tree()
+		else:
+			return false
 	var document: Variant = JavaScriptBridge.get_interface("document")
 	if document == null:
 		return false
@@ -99,28 +87,26 @@ func open(control: Control, text: String, options: Dictionary = {}) -> bool:
 	_input_callback = JavaScriptBridge.create_callback(_on_input)
 	_keydown_callback = JavaScriptBridge.create_callback(_on_keydown)
 	_blur_callback = JavaScriptBridge.create_callback(_on_element_blur)
+	_focus_callback = JavaScriptBridge.create_callback(_on_element_focus)
+	_resize_callback = JavaScriptBridge.create_callback(_on_window_resize)
 	_document_mousedown_callback = JavaScriptBridge.create_callback(
 		_on_document_mousedown,
 	)
 	_element.addEventListener("input", _input_callback)
 	_element.addEventListener("keydown", _keydown_callback)
-	_element.addEventListener("focus", JavaScriptBridge.create_callback(
-		_on_element_focus,
-	))
+	_element.addEventListener("focus", _focus_callback)
 	_element.addEventListener("blur", _blur_callback)
 	document.body.appendChild(_element)
 	var window_ref: Variant = JavaScriptBridge.get_interface("window")
 	if window_ref != null:
-		window_ref.addEventListener(
-			"resize",
-			JavaScriptBridge.create_callback(_on_window_resize),
-		)
+		window_ref.addEventListener("resize", _resize_callback)
 	var document_ref: Variant = JavaScriptBridge.get_interface("document")
 	if document_ref != null:
 		document_ref.addEventListener(
 			"mousedown",
 			_document_mousedown_callback,
 		)
+	_start_watchdog()
 	refresh_rect()
 	_element.focus()
 	var end := String(_element.value).length()
@@ -131,6 +117,7 @@ func open(control: Control, text: String, options: Dictionary = {}) -> bool:
 
 
 func close() -> void:
+	_stop_watchdog()
 	if _element != null:
 		var document_ref: Variant = JavaScriptBridge.get_interface("document")
 		if document_ref != null and _document_mousedown_callback != null:
@@ -139,15 +126,14 @@ func close() -> void:
 				_document_mousedown_callback,
 			)
 		var window_ref: Variant = JavaScriptBridge.get_interface("window")
-		if window_ref != null:
-			var resize_callback := JavaScriptBridge.create_callback(
-				_on_window_resize,
-			)
-			window_ref.removeEventListener("resize", resize_callback)
+		if window_ref != null and _resize_callback != null:
+			window_ref.removeEventListener("resize", _resize_callback)
 		if _input_callback != null:
 			_element.removeEventListener("input", _input_callback)
 		if _keydown_callback != null:
 			_element.removeEventListener("keydown", _keydown_callback)
+		if _focus_callback != null:
+			_element.removeEventListener("focus", _focus_callback)
 		if _blur_callback != null:
 			_element.removeEventListener("blur", _blur_callback)
 		_element.remove()
@@ -155,14 +141,12 @@ func close() -> void:
 	_input_callback = null
 	_keydown_callback = null
 	_blur_callback = null
+	_focus_callback = null
+	_resize_callback = null
 	_document_mousedown_callback = null
 	_control = null
 	_max_chars = 0
 	_element_focused = false
-
-
-func is_open() -> bool:
-	return _element != null
 
 
 func focus() -> void:
@@ -238,6 +222,50 @@ static func scaled_css_rect(
 		canvas_rect.position + control_rect.position * scale,
 		control_rect.size * scale,
 	)
+
+
+func _start_watchdog() -> void:
+	if _tree == null or not _tree.is_valid():
+		return
+	if _watchdog_timer != null:
+		return
+	_watchdog_callback = Callable(self , _watchdog_tick)
+	_watchdog_timer = _tree.create_timer(WATCHDOG_INTERVAL_SEC, true, false, true)
+	_watchdog_timer.timeout.connect(_watchdog_callback)
+
+
+func _stop_watchdog() -> void:
+	if _watchdog_timer != null:
+		if _watchdog_callback.is_valid():
+			_watchdog_timer.timeout.disconnect(_watchdog_callback)
+		_watchdog_timer = null
+	_watchdog_callback = Callable()
+
+
+func _watchdog_tick() -> void:
+	if _element == null:
+		_stop_watchdog()
+		return
+	if not is_instance_valid(_control):
+		close()
+		return
+	if not _control.is_inside_tree():
+		close()
+		return
+	if not _control.is_visible_in_tree():
+		close()
+		return
+	var rect := _control.get_global_rect()
+	var viewport_rect := _control.get_viewport_rect()
+	if rect.position.x + rect.size.x <= 0.0 or rect.position.y + rect.size.y <= 0.0:
+		close()
+		return
+	if (
+		rect.position.x >= viewport_rect.size.x
+		or rect.position.y >= viewport_rect.size.y
+	):
+		close()
+		return
 
 
 func _update_pointer_events() -> void:

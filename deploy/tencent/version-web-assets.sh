@@ -31,7 +31,9 @@ maybe_version_worklet() {
 		mv "$src_path" "$build_dir/$dst_name"
 		ln -s "$dst_name" "$src_path"
 		ln -s "$dst_name" "$build_dir/index.${kind}.worklet.js"
-		printf '%s' "$dst_name"
+		printf '%s\n' "$dst_name"
+	else
+		printf '\n'
 	fi
 }
 
@@ -42,6 +44,8 @@ wasm_name="index.$wasm_hash.wasm"
 wasm_base=${wasm_name%.wasm}
 audio_worklet_name=$(maybe_version_worklet "$audio_worklet" "audio")
 position_worklet_name=$(maybe_version_worklet "$position_worklet" "audio.position")
+[ -n "${audio_worklet_name:-}" ] || audio_worklet_name=""
+[ -n "${position_worklet_name:-}" ] || position_worklet_name=""
 
 mv "$pck" "$build_dir/$pck_name"
 mv "$wasm" "$build_dir/$wasm_name"
@@ -83,8 +87,12 @@ fi
 	printf 'VERSIONED_WASM=%s\n' "$wasm_name"
 	if [ -n "${audio_worklet_name:-}" ]; then
 		printf 'VERSIONED_AUDIO_WORKLET=%s\n' "$audio_worklet_name"
+	else
+		printf 'VERSIONED_AUDIO_WORKLET=\n'
 	fi
 	if [ -n "${position_worklet_name:-}" ]; then
 		printf 'VERSIONED_POSITION_WORKLET=%s\n' "$position_worklet_name"
+	else
+		printf 'VERSIONED_POSITION_WORKLET=\n'
 	fi
 }
