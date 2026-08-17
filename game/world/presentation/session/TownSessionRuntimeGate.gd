@@ -93,6 +93,9 @@ func validate_session_transaction(token_value: Variant) -> Dictionary:
 
 func end_session_transaction(token_value: Variant) -> Dictionary:
 	if not token_value is String or (token_value as String).is_empty():
+		_release_active_runtime_state()
+		_active.clear()
+		_last_ended_token = ""
 		return _failure("SESSION_SAVE_GATE_STALE", false)
 	var token := token_value as String
 	if _active.is_empty():
@@ -105,16 +108,13 @@ func end_session_transaction(token_value: Variant) -> Dictionary:
 			}
 		return _failure("SESSION_SAVE_GATE_STALE", false)
 	if String(_active.get("token", "")) != token:
+		_release_active_runtime_state()
+		_active.clear()
+		_last_ended_token = ""
 		return _failure("SESSION_SAVE_GATE_STALE", false)
 	var ended_generation := int(_active.get("generation", 0))
-	if _runtime != null and is_instance_valid(_runtime):
-		_runtime.set_process(bool(_active.get("process", true)))
-		_runtime.set_physics_process(bool(_active.get("physics", true)))
-		_runtime.set_process_input(bool(_active.get("input", true)))
-		_runtime.set_process_unhandled_input(
-			bool(_active.get("unhandledInput", true)),
-		)
-	else:
+	var runtime_released := _release_active_runtime_state()
+	if not runtime_released:
 		_active.clear()
 		_last_ended_token = ""
 		return _failure("SESSION_SAVE_GATE_INVALID", false)
@@ -144,3 +144,15 @@ func _success() -> Dictionary:
 
 func _failure(error_code: String, retryable: bool) -> Dictionary:
 	return RESULT_SHAPES.failure_retryable(error_code, retryable)
+
+
+func _release_active_runtime_state() -> bool:
+	if _runtime == null or not is_instance_valid(_runtime):
+		return false
+	_runtime.set_process(bool(_active.get("process", true)))
+	_runtime.set_physics_process(bool(_active.get("physics", true)))
+	_runtime.set_process_input(bool(_active.get("input", true)))
+	_runtime.set_process_unhandled_input(
+		bool(_active.get("unhandledInput", true)),
+	)
+	return true
