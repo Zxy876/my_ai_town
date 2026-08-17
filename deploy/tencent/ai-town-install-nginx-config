@@ -15,88 +15,70 @@ next=$(mktemp /opt/maieutic/.nginx-ai-town-cache.XXXXXX)
 edited=$(mktemp /opt/maieutic/.nginx-ai-town-cache-edited.XXXXXX)
 trap 'rm -f "$next" "$edited"' EXIT
 cp -p "$config" "$backup"
-cp -p "$config" "$next"
 
-pck_wasm_pattern='index\\.[0-9a-f]{16}\\.(pck|wasm)'
-worklet_pattern='index\\.[0-9a-f]{16}\\.audio(\\.position)?\\.worklet\\.js'
-map_header='map $uri $ai_town_asset_cache_control {'
-cache_header_line='add_header Cache-Control $ai_town_asset_cache_control always;'
+old_location='location ^~ /ai-town/ {
+        alias /var/www/maieutic-public/ai-town/;
+        index index.html;
+        add_header Cache-Control "public, max-age=3600" always;'
+new_location='location ^~ /ai-town/ {
+        alias /var/www/maieutic-public/ai-town/;
+        index index.html;
+        add_header Cache-Control $ai_town_asset_cache_control always;'
 
-sed 's/add_header Cache-Control "public, max-age=3600" always;/'${cache_header_line}'/' \
-	"$next" > "$edited"
-cp -p "$edited" "$next"
+anchor='limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;'
 
-if grep -Fq "$map_header" "$next"; then
-	if ! grep -Fq "$worklet_pattern" "$next"; then
-		awk -v wl_pat="$worklet_pattern" -v pw_pat="$pck_wasm_pattern" '
-			BEGIN { in_map = 0; did_insert = 0; depth = 0 }
-			{
-				line = $0
-				if (!in_map) {
-					if (match(line, /^[[:space:]]*map[[:space:]]+\$uri[[:space:]]+\$ai_town_asset_cache_control[[:space:]]*\{/)) {
-						in_map = 1
-						depth = 1
-						print line
-						next
-					}
-					print line
-					next
-				}
-				if (did_insert) {
-					print line
-					if (match(line, /^[[:space:]]*\}[[:space:]]*$/)) {
-						in_map = 0
-					}
-					next
-				}
-				if (index(line, pw_pat) > 0) {
-					print line
-					printf "    \"~^/ai-town/%s$\" \"public, max-age=31536000, immutable\";\n", wl_pat
-					did_insert = 1
-					next
-				}
-				if (match(line, /^[[:space:]]*\}[[:space:]]*$/)) {
-					printf "    \"~^/ai-town/%s$\" \"public, max-age=31536000, immutable\";\n", wl_pat
-					did_insert = 1
-					in_map = 0
-					print line
-					next
-				}
-				print line
-			}
-		' "$next" > "$edited"
-		cp -p "$edited" "$next"
-	fi
+if grep -Fq "$new_location" "$backup" && \
+   grep -Fq '~^/ai-town/index\\.[0-9a-f]{16}\\.audio(\\.position)?\\.worklet\\.js$' "$backup"; then
+	cp -p "$backup" "$next"
 else
-	awk -v pw_pat="$pck_wasm_pattern" -v wl_pat="$worklet_pattern" '
-		{ print }
-		$0 == "limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;" {
-			print ""
-			print "map $uri $ai_town_asset_cache_control {"
-			print "    default \"public, max-age=3600\";"
-			printf "    \"~^/ai-town/%s$\" \"public, max-age=31536000, immutable\";\n", pw_pat
-			printf "    \"~^/ai-town/%s$\" \"public, max-age=31536000, immutable\";\n", wl_pat
-			print "}"
+	awk -v old_loc="$old_location" -v new_loc="$new_location" -v anchor="$anchor" '
+		BEGIN { skipping_map = 0; did_print_map = 0 }
+		{
+			if (!skipping_map && match($0, /^[[:space:]]*map[[:space:]]+\$uri[[:space:]]+\$ai_town_asset_cache_control[[:space:]]*\{/)) {
+				skipping_map = 1
+				brace_balance = 1
+				next
+			}
+			if (skipping_map) {
+				n = split($0, ch, "")
+				for (i = 1; i <= n; i++) {
+					if (ch[i] == "{") brace_balance++
+					else if (ch[i] == "}") {
+						brace_balance--
+						if (brace_balance <= 0) {
+							skipping_map = 0
+							next
+						}
+					}
+				}
+				next
+			}
+			if ($0 == anchor && !did_print_map) {
+				print
+				print ""
+				print "map $uri $ai_town_asset_cache_control {"
+				print "    default \"public, max-age=3600\";"
+				print "    \"~^/ai-town/index\\.[0-9a-f]{16}\\.(pck|wasm)$\" \"public, max-age=31536000, immutable\";"
+				print "    \"~^/ai-town/index\\.[0-9a-f]{16}\\.audio(\\.position)?\\.worklet\\.js$\" \"public, max-age=31536000, immutable\";"
+				print "}"
+				did_print_map = 1
+				next
+			}
+			if (index($0, old_loc) > 0) {
+				print new_loc
+				next
+			}
+			print
 		}
-	' "$next" > "$edited"
-	cp -p "$edited" "$next"
+	' "$backup" > "$next"
 fi
 
-grep -Fq "$map_header" "$next"
-grep -Fq "$worklet_pattern" "$next"
-grep -Fq "$cache_header_line" "$next"
-printf 'AI_TOWN_MAP_SNIPPET_START\n'
-awk '
-	/^[[:space:]]*map[[:space:]]+\$uri[[:space:]]+\$ai_town_asset_cache_control[[:space:]]*\{/ { in_map = 1 }
-	in_map { print }
-	in_map && /^[[:space:]]*\}[[:space:]]*$/ { exit }
-' "$next"
-printf 'AI_TOWN_MAP_SNIPPET_END\n'
 cp -p "$next" "$config"
 
-if ! docker compose -f "$compose" exec -T nginx nginx -t; then
+docker compose -f "$compose" exec -T nginx nginx -t 2>&1 | head -5
+if ! docker compose -f "$compose" exec -T nginx nginx -t >/dev/null 2>&1; then
 	cp -p "$backup" "$config"
-	docker compose -f "$compose" exec -T nginx nginx -t
+	docker compose -f "$compose" exec -T nginx nginx -t 2>&1 | head -20
 	exit 1
 fi
 
