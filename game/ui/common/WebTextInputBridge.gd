@@ -16,7 +16,41 @@ var _control: Control
 var _element: Variant
 var _input_callback: Variant
 var _keydown_callback: Variant
+var _blur_callback: Variant
+var _document_mousedown_callback: Variant
 var _max_chars := 0
+var _element_focused := false
+var _process_token := 0
+
+
+func _init() -> void:
+	if OS.has_feature("web"):
+		set_process(true)
+
+
+func _process(delta: float) -> void:
+	if _element == null:
+		return
+	if not is_instance_valid(_control):
+		close()
+		return
+	if not _control.is_inside_tree():
+		close()
+		return
+	if not _control.is_visible_in_tree():
+		close()
+		return
+	var rect := _control.get_global_rect()
+	var viewport_rect := _control.get_viewport_rect()
+	if rect.position.x + rect.size.x <= 0.0 or rect.position.y + rect.size.y <= 0.0:
+		close()
+		return
+	if (
+		rect.position.x >= viewport_rect.size.x
+		or rect.position.y >= viewport_rect.size.y
+	):
+		close()
+		return
 
 
 func open(control: Control, text: String, options: Dictionary = {}) -> bool:
@@ -61,31 +95,70 @@ func open(control: Control, text: String, options: Dictionary = {}) -> bool:
 	style.setProperty("border-radius", "0")
 	style.setProperty("padding", String(options.get("padding", "12px")))
 	style.setProperty("margin", "0")
-	style.setProperty("pointer-events", "auto")
+	style.setProperty("pointer-events", "none")
 	_input_callback = JavaScriptBridge.create_callback(_on_input)
 	_keydown_callback = JavaScriptBridge.create_callback(_on_keydown)
+	_blur_callback = JavaScriptBridge.create_callback(_on_element_blur)
+	_document_mousedown_callback = JavaScriptBridge.create_callback(
+		_on_document_mousedown,
+	)
 	_element.addEventListener("input", _input_callback)
 	_element.addEventListener("keydown", _keydown_callback)
+	_element.addEventListener("focus", JavaScriptBridge.create_callback(
+		_on_element_focus,
+	))
+	_element.addEventListener("blur", _blur_callback)
 	document.body.appendChild(_element)
+	var window_ref: Variant = JavaScriptBridge.get_interface("window")
+	if window_ref != null:
+		window_ref.addEventListener(
+			"resize",
+			JavaScriptBridge.create_callback(_on_window_resize),
+		)
+	var document_ref: Variant = JavaScriptBridge.get_interface("document")
+	if document_ref != null:
+		document_ref.addEventListener(
+			"mousedown",
+			_document_mousedown_callback,
+		)
 	refresh_rect()
 	_element.focus()
 	var end := String(_element.value).length()
 	_element.setSelectionRange(end, end)
+	_element_focused = true
+	_update_pointer_events()
 	return true
 
 
 func close() -> void:
 	if _element != null:
+		var document_ref: Variant = JavaScriptBridge.get_interface("document")
+		if document_ref != null and _document_mousedown_callback != null:
+			document_ref.removeEventListener(
+				"mousedown",
+				_document_mousedown_callback,
+			)
+		var window_ref: Variant = JavaScriptBridge.get_interface("window")
+		if window_ref != null:
+			var resize_callback := JavaScriptBridge.create_callback(
+				_on_window_resize,
+			)
+			window_ref.removeEventListener("resize", resize_callback)
 		if _input_callback != null:
 			_element.removeEventListener("input", _input_callback)
 		if _keydown_callback != null:
 			_element.removeEventListener("keydown", _keydown_callback)
+		if _blur_callback != null:
+			_element.removeEventListener("blur", _blur_callback)
 		_element.remove()
 	_element = null
 	_input_callback = null
 	_keydown_callback = null
+	_blur_callback = null
+	_document_mousedown_callback = null
 	_control = null
 	_max_chars = 0
+	_element_focused = false
 
 
 func is_open() -> bool:
@@ -134,6 +207,7 @@ func refresh_rect() -> void:
 		canvas_rect,
 	).grow(-2.0)
 	if css_rect.size.x <= 0.0 or css_rect.size.y <= 0.0:
+		_close_when_rect_missing()
 		return
 	var scale := minf(
 		canvas_rect.size.x / maxf(viewport_size.x, 1.0),
@@ -146,6 +220,7 @@ func refresh_rect() -> void:
 	style.setProperty("width", _pixels(css_rect.size.x))
 	style.setProperty("height", _pixels(css_rect.size.y))
 	style.setProperty("font-size", _pixels(font_size))
+	_update_pointer_events()
 
 
 static func scaled_css_rect(
@@ -163,6 +238,46 @@ static func scaled_css_rect(
 		canvas_rect.position + control_rect.position * scale,
 		control_rect.size * scale,
 	)
+
+
+func _update_pointer_events() -> void:
+	if _element == null:
+		return
+	var style: Variant = _element.style
+	if _element_focused:
+		style.setProperty("pointer-events", "auto")
+	else:
+		style.setProperty("pointer-events", "none")
+
+
+func _close_when_rect_missing() -> void:
+	cancel_requested.emit()
+
+
+func _on_window_resize(_arguments: Array) -> void:
+	if OS.has_feature("web"):
+		refresh_rect.call_deferred()
+
+
+func _on_element_focus(_arguments: Array) -> void:
+	_element_focused = true
+	_update_pointer_events()
+
+
+func _on_element_blur(_arguments: Array) -> void:
+	_element_focused = false
+	_update_pointer_events()
+
+
+func _on_document_mousedown(arguments: Array) -> void:
+	if _element == null or arguments.is_empty():
+		return
+	var event: Variant = arguments[0]
+	if event == null:
+		return
+	var target: Variant = event.target
+	if target == null or target != _element:
+		cancel_requested.emit()
 
 
 func _on_input(_arguments: Array) -> void:

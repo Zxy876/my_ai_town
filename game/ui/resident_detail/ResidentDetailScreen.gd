@@ -361,11 +361,12 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	theme = PAGE_THEME
-	_selected_content_font = FontVariation.new()
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_MODE_DISABLED
+	_build_default_theme_fonts()
 	_selected_content_font.base_font = PAGE_THEME.default_font
 	_selected_content_font.variation_embolden = 0.8
 	_build_interface()
+	visibility_changed.connect(_on_visibility_changed)
 	resized.connect(_queue_layout)
 	get_viewport().size_changed.connect(_queue_layout)
 	if _adapter != null:
@@ -386,6 +387,7 @@ func _exit_tree() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_pressed() or event.is_echo():
 		return
+	_reconcile_memory_operation_bridge_before_input()
 	var cancel_requested := event.is_action_pressed(&"ui_cancel")
 	if event is InputEventKey:
 		cancel_requested = (
@@ -1082,6 +1084,63 @@ func _on_memory_input_text_changed() -> void:
 	_queue_wood_scrollbar_refresh()
 
 
+func _on_visibility_changed() -> void:
+	if is_visible_in_tree():
+		return
+	if _memory_operation_visible:
+		_memory_operation_visible = false
+		_runtime_observation_id = ""
+	_close_memory_operation_web_input()
+
+
+func _reconcile_memory_operation_bridge_for_render(selected_tab: String) -> void:
+	if not _memory_operation_visible:
+		_close_memory_operation_web_input()
+		return
+	if selected_tab != "memories":
+		_memory_operation_visible = false
+		_runtime_observation_id = ""
+		_close_memory_operation_web_input()
+		_apply_memory_operation_visibility()
+		return
+	if (
+		_memory_operation_web_input != null
+		and _memory_operation_web_input.is_open()
+	):
+		return
+	if not is_instance_valid(_memory_operation_input):
+		_close_memory_operation_web_input()
+		return
+	if (
+		not _memory_operation_input.is_inside_tree()
+		or not _memory_operation_input.is_visible_in_tree()
+	):
+		_close_memory_operation_web_input()
+
+
+func _reconcile_memory_operation_bridge_before_input() -> void:
+	if _memory_operation_web_input == null:
+		return
+	if not _memory_operation_web_input.is_open():
+		return
+	if not _memory_operation_visible:
+		_close_memory_operation_web_input()
+		return
+	if not is_visible_in_tree():
+		_memory_operation_visible = false
+		_runtime_observation_id = ""
+		_close_memory_operation_web_input()
+		return
+	if not is_instance_valid(_memory_operation_input):
+		_close_memory_operation_web_input()
+		return
+	if (
+		not _memory_operation_input.is_inside_tree()
+		or not _memory_operation_input.is_visible_in_tree()
+	):
+		_close_memory_operation_web_input()
+
+
 func _on_memory_operation_web_text_changed(value: String) -> void:
 	if (
 		_memory_operation_input != null
@@ -1160,6 +1219,7 @@ func _render() -> void:
 	)
 	if selected_tab not in TAB_IDS:
 		selected_tab = "status"
+	_reconcile_memory_operation_bridge_for_render(selected_tab)
 	_apply_page_background(selected_tab)
 	var tabs := _tabs_by_id()
 	for tab_id: String in TAB_IDS:
