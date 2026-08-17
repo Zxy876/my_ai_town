@@ -11,106 +11,96 @@ test -s "$compose"
 mkdir -p "$backup_dir"
 
 backup="$backup_dir/nginx.conf-pre-ai-town-cache-$(date +%Y%m%d-%H%M%S)"
-next=$(mktemp /opt/maieutic/.nginx-ai-town-cache.XXXXXX)
-trap 'rm -f "$next"' EXIT
+edited=$(mktemp /opt/maieutic/.nginx-ai-town-cache.XXXXXX)
+trap 'rm -f "$edited"' EXIT
 cp -p "$config" "$backup"
 
-worklet_loc_regex_audio='location ~* ^/ai-town/index\.[0-9a-f]{16}\.audio\.worklet\.js$ {'
-worklet_loc_regex_position='location ~* ^/ai-town/index\.[0-9a-f]{16}\.audio\.position\.worklet\.js$ {'
-worklet_pat_map_audio='~^/ai-town/index\.[0-9a-f]{16}\.audio\.worklet\.js$'
-worklet_pat_map_position='~^/ai-town/index\.[0-9a-f]{16}\.audio\.position\.worklet\.js$'
-worklet_pat_any='~^/ai-town/index\.[0-9a-f]{16}\.audio'
-pck_wasm_pat='~^/ai-town/index\.[0-9a-f]{16}\.(pck|wasm)$'
-map_header_regex='^[[:space:]]*map[[:space:]]+\$uri[[:space:]]+\$ai_town_asset_cache_control[[:space:]]*\{'
-ai_town_prefix_loc_regex='^[[:space:]]*location[[:space:]]+\^~[[:space:]]+/ai-town/[[:space:]]*\{'
-anchor='limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;'
-
-loc_audio_block="${worklet_loc_regex_audio}
-        root /var/www/maieutic-public;
-        add_header Cache-Control \"public, max-age=31536000, immutable\" always;
-        add_header Cross-Origin-Opener-Policy \"same-origin\" always;
-        add_header Cross-Origin-Embedder-Policy \"require-corp\" always;
-        add_header Cross-Origin-Resource-Policy \"same-origin\" always;
-        try_files \$uri =404;
-    }"
-loc_position_block="${worklet_loc_regex_position}
-        root /var/www/maieutic-public;
-        add_header Cache-Control \"public, max-age=31536000, immutable\" always;
-        add_header Cross-Origin-Opener-Policy \"same-origin\" always;
-        add_header Cross-Origin-Embedder-Policy \"require-corp\" always;
-        add_header Cross-Origin-Resource-Policy \"same-origin\" always;
-        try_files \$uri =404;
-    }"
-
-fresh_map_block='map $uri $ai_town_asset_cache_control {
+FRESH_MAP='map $uri $ai_town_asset_cache_control {
     default "public, max-age=3600";
-    "'"$pck_wasm_pat"'" "public, max-age=31536000, immutable";
-    "'"$worklet_pat_map_audio"'" "public, max-age=31536000, immutable";
-    "'"$worklet_pat_map_position"'" "public, max-age=31536000, immutable";
+    "~^/ai-town/index\.[0-9a-f]{16}\.(pck|wasm)$" "public, max-age=31536000, immutable";
+    "~^/ai-town/index\.[0-9a-f]{16}\.audio\.worklet\.js$" "public, max-age=31536000, immutable";
+    "~^/ai-town/index\.[0-9a-f]{16}\.audio\.position\.worklet\.js$" "public, max-age=31536000, immutable";
 }'
 
-if grep -Eq "$map_header_regex" "$backup" && \
-   grep -Fq "$worklet_pat_any" "$backup" && \
-   grep -Fq "$worklet_loc_regex_audio" "$backup" && \
-   grep -Fq "$worklet_loc_regex_position" "$backup"; then
-	cp -p "$backup" "$next"
-else
-	awk -v anchor="$anchor" \
-	    -v fresh_map="$fresh_map_block" \
-	    -v map_header_re="$map_header_regex" \
-	    -v ai_town_loc_re="$ai_town_prefix_loc_regex" \
-	    -v loc_audio="$loc_audio_block" \
-	    -v loc_pos="$loc_position_block" '
-		BEGIN {
-			skipping_map = 0
-			did_print_map = 0
-			did_insert_worklet_locs = 0
-		}
-		{
-			if (!skipping_map && $0 ~ map_header_re) {
-				skipping_map = 1
-				brace_balance = 1
-				next
-			}
-			if (skipping_map) {
-				n = split($0, ch, "")
-				for (i = 1; i <= n; i++) {
-					if (ch[i] == "{") brace_balance++
-					else if (ch[i] == "}") {
-						brace_balance--
-						if (brace_balance <= 0) { skipping_map = 0; next }
-					}
-				}
-				next
-			}
-			if ($0 == anchor && !did_print_map) {
-				print
-				print ""
-				print fresh_map
-				did_print_map = 1
-				next
-			}
-			if ($0 ~ ai_town_loc_re && !did_insert_worklet_locs) {
-				print ""
-				print "    " loc_audio
-				print ""
-				print "    " loc_pos
-				print ""
-				print
-				did_insert_worklet_locs = 1
-				next
-			}
-			print
-		}
-	' "$backup" > "$next"
+WORKLET_LOCATIONS='    location ~* ^/ai-town/index\.[0-9a-f]{16}\.audio\.worklet\.js$ {
+        root /var/www/maieutic-public;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        try_files $uri =404;
+    }
+
+    location ~* ^/ai-town/index\.[0-9a-f]{16}\.audio\.position\.worklet\.js$ {
+        root /var/www/maieutic-public;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        try_files $uri =404;
+    }
+'
+
+DYNAMIC_HEADER='add_header Cache-Control $ai_town_asset_cache_control always;'
+OLD_HEADER='add_header Cache-Control "public, max-age=3600" always;'
+ANCHOR_LINE='limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;'
+AI_TOWN_PREFIX_LOC='location ^~ /ai-town/ {'
+
+AUDIO_HASH_MARKER='index\.[0-9a-f]{16}\.audio\.worklet\.js'
+POSITION_HASH_MARKER='index\.[0-9a-f]{16}\.audio\.position\.worklet\.js'
+
+if grep -Fq "$DYNAMIC_HEADER" "$backup" && \
+   grep -Fq "$AUDIO_HASH_MARKER" "$backup" && \
+   grep -Fq "$POSITION_HASH_MARKER" "$backup" && \
+   grep -Fq "$FRESH_MAP" "$backup" >/dev/null 2>&1 || true; then
+	if grep -Fq "$AUDIO_HASH_MARKER" "$backup" && \
+	   grep -Fq "$POSITION_HASH_MARKER" "$backup" && \
+	   grep -Fq "$DYNAMIC_HEADER" "$backup"; then
+		cp -p "$backup" "$edited"
+	fi
 fi
 
-cp -p "$next" "$config"
+if [ ! -s "$edited" ] || ! cmp -s "$backup" "$edited"; then
+	python3 - "$backup" "$edited" "$FRESH_MAP" "$WORKLET_LOCATIONS" "$ANCHOR_LINE" "$AI_TOWN_PREFIX_LOC" "$DYNAMIC_HEADER" "$OLD_HEADER" <<'PY'
+import sys, re
+src, dst, fresh_map, worklet_locs, anchor, ai_town_loc, dynamic_hdr, old_hdr = sys.argv[1:9]
+with open(src, 'r') as f:
+    text = f.read()
+
+text = text.replace(old_hdr, dynamic_hdr)
+
+map_pattern = re.compile(r'^[ \t]*map[ \t]+\$uri[ \t]+\$ai_town_asset_cache_control[ \t]*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[ \t]*\n?', re.MULTILINE)
+new_text, n_subs = map_pattern.subn('', text, count=1)
+if n_subs == 0:
+    new_text = text
+
+anchor_re = re.compile(r'(^[ \t]*' + re.escape(anchor) + r'[ \t]*\n?)', re.MULTILINE)
+m = anchor_re.search(new_text)
+if m and (fresh_map.strip() not in new_text):
+    insert_at = m.end()
+    new_text = new_text[:insert_at] + '\n' + fresh_map + '\n' + new_text[insert_at:]
+
+if worklet_locs.strip() not in new_text:
+    prefix_loc_re = re.compile(r'(^[ \t]*' + re.escape(ai_town_loc) + r'[ \t]*\n?)', re.MULTILINE)
+    m2 = prefix_loc_re.search(new_text)
+    if m2:
+        insert2 = m2.start()
+        new_text = new_text[:insert2] + worklet_locs + '\n' + new_text[insert2:]
+
+with open(dst, 'w') as f:
+    f.write(new_text)
+PY
+fi
+
+cp -p "$edited" "$config"
 
 docker compose -f "$compose" exec -T nginx nginx -t 2>&1 | head -5
 if ! docker compose -f "$compose" exec -T nginx nginx -t >/dev/null 2>&1; then
+	echo '--- nginx.conf edited (first 180 lines): ---' >&2
+	head -n 180 "$config" >&2 || true
+	echo '-------------------------------------------' >&2
 	cp -p "$backup" "$config"
-	docker compose -f "$compose" exec -T nginx nginx -t 2>&1 | head -20
+	docker compose -f "$compose" exec -T nginx nginx -t 2>&1 | head -5 >&2 || true
 	exit 1
 fi
 
