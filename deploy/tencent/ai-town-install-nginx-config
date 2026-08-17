@@ -25,6 +25,7 @@ if ! grep -Fq 'map $uri $ai_town_asset_cache_control {' "$next"; then
 			print "map $uri $ai_town_asset_cache_control {"
 			print "    default \"public, max-age=3600\";"
 			print "    \"~^/ai-town/index\\.[0-9a-f]{16}\\.(pck|wasm)$\" \"public, max-age=31536000, immutable\";"
+			print "    \"~^/ai-town/index\\.[0-9a-f]{16}\\.audio(\\.position)?\\.worklet\\.js$\" \"public, max-age=31536000, immutable\";"
 			print "}"
 		}
 	' "$next" > "$edited"
