@@ -207,6 +207,15 @@ jobs:
             test -s '$destination/'\"\$versioned_wasm_base\".wasm
             test -s '$destination/'\"\$versioned_audio_worklet\"
             test -s '$destination/'\"\$versioned_position_worklet\"
+            echo '=== DEBUG BEGIN: host /opt/maieutic/nginx.conf map+worklet grep ==='
+            grep -n -E 'map \\$uri|audio\\.worklet|Cache-Control' /opt/maieutic/nginx.conf 2>&1 | head -50 || true
+            echo '=== DEBUG END host ==='
+            echo '=== DEBUG BEGIN: nginx container /etc/nginx/nginx.conf map+worklet grep ==='
+            sudo -n docker compose -f /opt/maieutic/docker-compose.yml exec -T nginx sh -c 'grep -n -E \"map \\$uri|audio\\.worklet|Cache-Control\" /etc/nginx/nginx.conf 2>&1 | head -60 || true'
+            echo '=== DEBUG END container ==='
+            echo '=== DEBUG BEGIN: versioned_audio_worklet HEADERS ==='
+            curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_audio_worklet\" 2>&1 || true
+            echo '=== DEBUG END audio headers ==='
             pck_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_pck\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
             wasm_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_wasm_base.wasm\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
             audio_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_audio_worklet\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
