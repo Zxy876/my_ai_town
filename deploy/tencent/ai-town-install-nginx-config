@@ -17,59 +17,82 @@ trap 'rm -f "$next" "$edited"' EXIT
 cp -p "$config" "$backup"
 cp -p "$config" "$next"
 
-worklet_rule='    "~^/ai-town/index\.[0-9a-f]{16}\.audio(\.position)?\.worklet\.js$" "public, max-age=31536000, immutable";'
-pck_wasm_rule='    "~^/ai-town/index\.[0-9a-f]{16}\.(pck|wasm)$" "public, max-age=31536000, immutable";'
+pck_wasm_pattern='index\\.[0-9a-f]{16}\\.(pck|wasm)'
+worklet_pattern='index\\.[0-9a-f]{16}\\.audio(\\.position)?\\.worklet\\.js'
 map_header='map $uri $ai_town_asset_cache_control {'
+cache_header_line='add_header Cache-Control $ai_town_asset_cache_control always;'
 
-if ! grep -Fq "$map_header" "$next"; then
-	awk -v map_header="$map_header" -v pck_rule="$pck_wasm_rule" -v wl_rule="$worklet_rule" '
+sed 's/add_header Cache-Control "public, max-age=3600" always;/'${cache_header_line}'/' \
+	"$next" > "$edited"
+cp -p "$edited" "$next"
+
+if grep -Fq "$map_header" "$next"; then
+	if ! grep -Fq "$worklet_pattern" "$next"; then
+		awk -v wl_pat="$worklet_pattern" -v pw_pat="$pck_wasm_pattern" '
+			BEGIN { in_map = 0; did_insert = 0; depth = 0 }
+			{
+				line = $0
+				if (!in_map) {
+					if (match(line, /^[[:space:]]*map[[:space:]]+\$uri[[:space:]]+\$ai_town_asset_cache_control[[:space:]]*\{/)) {
+						in_map = 1
+						depth = 1
+						print line
+						next
+					}
+					print line
+					next
+				}
+				if (did_insert) {
+					print line
+					if (match(line, /^[[:space:]]*\}[[:space:]]*$/)) {
+						in_map = 0
+					}
+					next
+				}
+				if (index(line, pw_pat) > 0) {
+					print line
+					printf "    \"~^/ai-town/%s$\" \"public, max-age=31536000, immutable\";\n", wl_pat
+					did_insert = 1
+					next
+				}
+				if (match(line, /^[[:space:]]*\}[[:space:]]*$/)) {
+					printf "    \"~^/ai-town/%s$\" \"public, max-age=31536000, immutable\";\n", wl_pat
+					did_insert = 1
+					in_map = 0
+					print line
+					next
+				}
+				print line
+			}
+		' "$next" > "$edited"
+		cp -p "$edited" "$next"
+	fi
+else
+	awk -v pw_pat="$pck_wasm_pattern" -v wl_pat="$worklet_pattern" '
 		{ print }
 		$0 == "limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;" {
 			print ""
-			print map_header
+			print "map $uri $ai_town_asset_cache_control {"
 			print "    default \"public, max-age=3600\";"
-			print pck_rule
-			print wl_rule
+			printf "    \"~^/ai-town/%s$\" \"public, max-age=31536000, immutable\";\n", pw_pat
+			printf "    \"~^/ai-town/%s$\" \"public, max-age=31536000, immutable\";\n", wl_pat
 			print "}"
-		}
-	' "$next" > "$edited"
-	cp -p "$edited" "$next"
-elif ! grep -Fq "$worklet_rule" "$next"; then
-	awk -v wl_rule="$worklet_rule" -v pck_rule="$pck_wasm_rule" '
-		BEGIN { inserted = 0; in_map = 0 }
-		{
-			if (!inserted && $0 ~ /^map \$uri \$ai_town_asset_cache_control \{[[:space:]]*$/) {
-				in_map = 1
-				print
-				next
-			}
-			if (in_map && !inserted) {
-				if ($0 ~ /^[[:space:]]*\}[[:space:]]*$/) {
-					print wl_rule
-					inserted = 1
-				} else if (index($0, pck_rule) > 0) {
-					print
-					print wl_rule
-					inserted = 1
-					next
-				}
-			}
-			if (in_map && $0 ~ /^[[:space:]]*\}[[:space:]]*$/) {
-				in_map = 0
-			}
-			print
 		}
 	' "$next" > "$edited"
 	cp -p "$edited" "$next"
 fi
 
-sed 's/add_header Cache-Control "public, max-age=3600" always;/add_header Cache-Control $ai_town_asset_cache_control always;/' \
-	"$next" > "$edited"
-
-grep -Fq "$map_header" "$edited"
-grep -Fq "$worklet_rule" "$edited"
-grep -Fq 'add_header Cache-Control $ai_town_asset_cache_control always;' "$edited"
-cp -p "$edited" "$config"
+grep -Fq "$map_header" "$next"
+grep -Fq "$worklet_pattern" "$next"
+grep -Fq "$cache_header_line" "$next"
+printf 'AI_TOWN_MAP_SNIPPET_START\n'
+awk '
+	/^[[:space:]]*map[[:space:]]+\$uri[[:space:]]+\$ai_town_asset_cache_control[[:space:]]*\{/ { in_map = 1 }
+	in_map { print }
+	in_map && /^[[:space:]]*\}[[:space:]]*$/ { exit }
+' "$next"
+printf 'AI_TOWN_MAP_SNIPPET_END\n'
+cp -p "$next" "$config"
 
 if ! docker compose -f "$compose" exec -T nginx nginx -t; then
 	cp -p "$backup" "$config"
