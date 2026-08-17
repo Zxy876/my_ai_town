@@ -103,6 +103,19 @@ jobs:
           test -s web-build/index.html
           test -s web-build/index.pck
           test -s web-build/index.wasm
+          test -s web-build/index.js
+          if [ -s web-build/index.audio.worklet.js ]; then
+            test -s web-build/index.audio.worklet.js
+            test -s web-build/index.audio.position.worklet.js
+          elif [ -s web-build/godot.audio.worklet.js ]; then
+            test -s web-build/godot.audio.worklet.js
+            test -s web-build/godot.audio.position.worklet.js
+          else
+            echo "::error::Neither index.*.worklet.js nor godot.*.worklet.js produced by Web export."
+            ls -la web-build
+            exit 1
+          fi
+          ls -la web-build
 
       - name: Version large Web assets for persistent browser caching
         run: |
