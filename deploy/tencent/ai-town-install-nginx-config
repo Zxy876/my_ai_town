@@ -12,29 +12,62 @@ mkdir -p "$backup_dir"
 
 backup="$backup_dir/nginx.conf-pre-ai-town-cache-$(date +%Y%m%d-%H%M%S)"
 next=$(mktemp /opt/maieutic/.nginx-ai-town-cache.XXXXXX)
-edited=$(mktemp /opt/maieutic/.nginx-ai-town-cache-edited.XXXXXX)
-trap 'rm -f "$next" "$edited"' EXIT
+trap 'rm -f "$next"' EXIT
 cp -p "$config" "$backup"
 
-old_location='location ^~ /ai-town/ {
-        alias /var/www/maieutic-public/ai-town/;
-        index index.html;
-        add_header Cache-Control "public, max-age=3600" always;'
-new_location='location ^~ /ai-town/ {
-        alias /var/www/maieutic-public/ai-town/;
-        index index.html;
-        add_header Cache-Control $ai_town_asset_cache_control always;'
-
+worklet_loc_regex_audio='location ~* ^/ai-town/index\.[0-9a-f]{16}\.audio\.worklet\.js$ {'
+worklet_loc_regex_position='location ~* ^/ai-town/index\.[0-9a-f]{16}\.audio\.position\.worklet\.js$ {'
+worklet_pat_map_audio='~^/ai-town/index\.[0-9a-f]{16}\.audio\.worklet\.js$'
+worklet_pat_map_position='~^/ai-town/index\.[0-9a-f]{16}\.audio\.position\.worklet\.js$'
+worklet_pat_any='~^/ai-town/index\.[0-9a-f]{16}\.audio'
+pck_wasm_pat='~^/ai-town/index\.[0-9a-f]{16}\.(pck|wasm)$'
+map_header_regex='^[[:space:]]*map[[:space:]]+\$uri[[:space:]]+\$ai_town_asset_cache_control[[:space:]]*\{'
+ai_town_prefix_loc_regex='^[[:space:]]*location[[:space:]]+\^~[[:space:]]+/ai-town/[[:space:]]*\{'
 anchor='limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;'
 
-if grep -Fq "$new_location" "$backup" && \
-   grep -Fq '~^/ai-town/index\\.[0-9a-f]{16}\\.audio(\\.position)?\\.worklet\\.js$' "$backup"; then
+loc_audio_block="${worklet_loc_regex_audio}
+        root /var/www/maieutic-public;
+        add_header Cache-Control \"public, max-age=31536000, immutable\" always;
+        add_header Cross-Origin-Opener-Policy \"same-origin\" always;
+        add_header Cross-Origin-Embedder-Policy \"require-corp\" always;
+        add_header Cross-Origin-Resource-Policy \"same-origin\" always;
+        try_files \$uri =404;
+    }"
+loc_position_block="${worklet_loc_regex_position}
+        root /var/www/maieutic-public;
+        add_header Cache-Control \"public, max-age=31536000, immutable\" always;
+        add_header Cross-Origin-Opener-Policy \"same-origin\" always;
+        add_header Cross-Origin-Embedder-Policy \"require-corp\" always;
+        add_header Cross-Origin-Resource-Policy \"same-origin\" always;
+        try_files \$uri =404;
+    }"
+
+fresh_map_block='map $uri $ai_town_asset_cache_control {
+    default "public, max-age=3600";
+    "'"$pck_wasm_pat"'" "public, max-age=31536000, immutable";
+    "'"$worklet_pat_map_audio"'" "public, max-age=31536000, immutable";
+    "'"$worklet_pat_map_position"'" "public, max-age=31536000, immutable";
+}'
+
+if grep -Eq "$map_header_regex" "$backup" && \
+   grep -Fq "$worklet_pat_any" "$backup" && \
+   grep -Fq "$worklet_loc_regex_audio" "$backup" && \
+   grep -Fq "$worklet_loc_regex_position" "$backup"; then
 	cp -p "$backup" "$next"
 else
-	awk -v old_loc="$old_location" -v new_loc="$new_location" -v anchor="$anchor" '
-		BEGIN { skipping_map = 0; did_print_map = 0 }
+	awk -v anchor="$anchor" \
+	    -v fresh_map="$fresh_map_block" \
+	    -v map_header_re="$map_header_regex" \
+	    -v ai_town_loc_re="$ai_town_prefix_loc_regex" \
+	    -v loc_audio="$loc_audio_block" \
+	    -v loc_pos="$loc_position_block" '
+		BEGIN {
+			skipping_map = 0
+			did_print_map = 0
+			did_insert_worklet_locs = 0
+		}
 		{
-			if (!skipping_map && match($0, /^[[:space:]]*map[[:space:]]+\$uri[[:space:]]+\$ai_town_asset_cache_control[[:space:]]*\{/)) {
+			if (!skipping_map && $0 ~ map_header_re) {
 				skipping_map = 1
 				brace_balance = 1
 				next
@@ -45,10 +78,7 @@ else
 					if (ch[i] == "{") brace_balance++
 					else if (ch[i] == "}") {
 						brace_balance--
-						if (brace_balance <= 0) {
-							skipping_map = 0
-							next
-						}
+						if (brace_balance <= 0) { skipping_map = 0; next }
 					}
 				}
 				next
@@ -56,16 +86,18 @@ else
 			if ($0 == anchor && !did_print_map) {
 				print
 				print ""
-				print "map $uri $ai_town_asset_cache_control {"
-				print "    default \"public, max-age=3600\";"
-				print "    \"~^/ai-town/index\\.[0-9a-f]{16}\\.(pck|wasm)$\" \"public, max-age=31536000, immutable\";"
-				print "    \"~^/ai-town/index\\.[0-9a-f]{16}\\.audio(\\.position)?\\.worklet\\.js$\" \"public, max-age=31536000, immutable\";"
-				print "}"
+				print fresh_map
 				did_print_map = 1
 				next
 			}
-			if (index($0, old_loc) > 0) {
-				print new_loc
+			if ($0 ~ ai_town_loc_re && !did_insert_worklet_locs) {
+				print ""
+				print "    " loc_audio
+				print ""
+				print "    " loc_pos
+				print ""
+				print
+				did_insert_worklet_locs = 1
 				next
 			}
 			print

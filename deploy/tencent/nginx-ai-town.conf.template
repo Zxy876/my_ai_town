@@ -4,6 +4,8 @@ limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;
 map $uri $ai_town_asset_cache_control {
     default "public, max-age=3600";
     "~^/ai-town/index\.[0-9a-f]{16}\.(pck|wasm)$" "public, max-age=31536000, immutable";
+    "~^/ai-town/index\.[0-9a-f]{16}\.audio\.worklet\.js$" "public, max-age=31536000, immutable";
+    "~^/ai-town/index\.[0-9a-f]{16}\.audio\.position\.worklet\.js$" "public, max-age=31536000, immutable";
 }
 
 server {
@@ -84,6 +86,24 @@ server {
         add_header Cross-Origin-Resource-Policy "same-origin" always;
     }
 
+    location ~* ^/ai-town/index\.[0-9a-f]{16}\.audio\.worklet\.js$ {
+        root /var/www/maieutic-public;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        try_files $uri =404;
+    }
+
+    location ~* ^/ai-town/index\.[0-9a-f]{16}\.audio\.position\.worklet\.js$ {
+        root /var/www/maieutic-public;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        try_files $uri =404;
+    }
+
     location ^~ /ai-town/ {
         alias /var/www/maieutic-public/ai-town/;
         index index.html;
@@ -94,7 +114,7 @@ server {
     }
 
     location /api/health {
-        proxy_pass http://app:3000/api/health;
+        proxy_pass http://app:3000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
