@@ -17,16 +17,47 @@ trap 'rm -f "$next" "$edited"' EXIT
 cp -p "$config" "$backup"
 cp -p "$config" "$next"
 
-if ! grep -Fq 'map $uri $ai_town_asset_cache_control {' "$next"; then
-	awk '
+worklet_rule='    "~^/ai-town/index\.[0-9a-f]{16}\.audio(\.position)?\.worklet\.js$" "public, max-age=31536000, immutable";'
+pck_wasm_rule='    "~^/ai-town/index\.[0-9a-f]{16}\.(pck|wasm)$" "public, max-age=31536000, immutable";'
+map_header='map $uri $ai_town_asset_cache_control {'
+
+if ! grep -Fq "$map_header" "$next"; then
+	awk -v map_header="$map_header" -v pck_rule="$pck_wasm_rule" -v wl_rule="$worklet_rule" '
 		{ print }
 		$0 == "limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;" {
 			print ""
-			print "map $uri $ai_town_asset_cache_control {"
+			print map_header
 			print "    default \"public, max-age=3600\";"
-			print "    \"~^/ai-town/index\\.[0-9a-f]{16}\\.(pck|wasm)$\" \"public, max-age=31536000, immutable\";"
-			print "    \"~^/ai-town/index\\.[0-9a-f]{16}\\.audio(\\.position)?\\.worklet\\.js$\" \"public, max-age=31536000, immutable\";"
+			print pck_rule
+			print wl_rule
 			print "}"
+		}
+	' "$next" > "$edited"
+	cp -p "$edited" "$next"
+elif ! grep -Fq "$worklet_rule" "$next"; then
+	awk -v wl_rule="$worklet_rule" -v pck_rule="$pck_wasm_rule" '
+		BEGIN { inserted = 0; in_map = 0 }
+		{
+			if (!inserted && $0 ~ /^map \$uri \$ai_town_asset_cache_control \{[[:space:]]*$/) {
+				in_map = 1
+				print
+				next
+			}
+			if (in_map && !inserted) {
+				if ($0 ~ /^[[:space:]]*\}[[:space:]]*$/) {
+					print wl_rule
+					inserted = 1
+				} else if (index($0, pck_rule) > 0) {
+					print
+					print wl_rule
+					inserted = 1
+					next
+				}
+			}
+			if (in_map && $0 ~ /^[[:space:]]*\}[[:space:]]*$/) {
+				in_map = 0
+			}
+			print
 		}
 	' "$next" > "$edited"
 	cp -p "$edited" "$next"
@@ -35,7 +66,8 @@ fi
 sed 's/add_header Cache-Control "public, max-age=3600" always;/add_header Cache-Control $ai_town_asset_cache_control always;/' \
 	"$next" > "$edited"
 
-grep -Fq 'map $uri $ai_town_asset_cache_control {' "$edited"
+grep -Fq "$map_header" "$edited"
+grep -Fq "$worklet_rule" "$edited"
 grep -Fq 'add_header Cache-Control $ai_town_asset_cache_control always;' "$edited"
 cp -p "$edited" "$config"
 
