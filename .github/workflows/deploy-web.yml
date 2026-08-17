@@ -110,6 +110,17 @@ jobs:
           sh deploy/tencent/version-web-assets.sh web-build | tee /tmp/versioned-web-assets.env
           test -L web-build/index.pck
           test -L web-build/index.wasm
+          set +u
+          . /tmp/versioned-web-assets.env
+          set -u
+          test -n "$VERSIONED_AUDIO_WORKLET"
+          test -n "$VERSIONED_POSITION_WORKLET"
+          test -L web-build/index.audio.worklet.js
+          test -L web-build/index.audio.position.worklet.js
+          test -L web-build/godot.audio.worklet.js
+          test -L web-build/godot.audio.position.worklet.js
+          grep -Fq "\"$VERSIONED_AUDIO_WORKLET\"" web-build/index.js
+          grep -Fq "\"$VERSIONED_POSITION_WORKLET\"" web-build/index.js
 
       - name: Ensure no API key entered the browser bundle
         run: |
@@ -157,22 +168,41 @@ jobs:
             test -s '$destination/index.html'
             test -s '$destination/index.pck'
             test -s '$destination/index.wasm'
+            test -s '$destination/index.js'
+            test -s '$destination/index.audio.worklet.js'
+            test -s '$destination/index.audio.position.worklet.js'
+            test -s '$destination/godot.audio.worklet.js'
+            test -s '$destination/godot.audio.position.worklet.js'
             sudo -n /usr/local/sbin/ai-town-install-nginx-config
             sudo -n /usr/local/sbin/ai-town-activate '$GITHUB_SHA'
             test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}')\" = 200
             test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}index.wasm')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}godot.audio.worklet.js')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}godot.audio.position.worklet.js')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}index.audio.worklet.js')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}index.audio.position.worklet.js')\" = 200
 
             versioned_pck=\$(sed -n 's/.*\"mainPack\":\"\([^\"]*\.pck\)\".*/\1/p' '$destination/index.html')
             versioned_wasm_base=\$(sed -n 's/.*\"executable\":\"\([^\"]*\)\".*/\1/p' '$destination/index.html')
+            versioned_audio_worklet=\$(grep -oE '\"index\.[A-Za-z0-9]+\.audio\.worklet\.js\"' '$destination/index.js' | head -n 1 | tr -d '\"')
+            versioned_position_worklet=\$(grep -oE '\"index\.[A-Za-z0-9]+\.audio\.position\.worklet\.js\"' '$destination/index.js' | head -n 1 | tr -d '\"')
             test -n \"\$versioned_pck\"
             test -n \"\$versioned_wasm_base\"
-            test -s \"$destination/\$versioned_pck\"
-            test -s \"$destination/\$versioned_wasm_base.wasm\"
+            test -n \"\$versioned_audio_worklet\"
+            test -n \"\$versioned_position_worklet\"
+            test -s '$destination/'\"\$versioned_pck\"
+            test -s '$destination/'\"\$versioned_wasm_base\".wasm
+            test -s '$destination/'\"\$versioned_audio_worklet\"
+            test -s '$destination/'\"\$versioned_position_worklet\"
             pck_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_pck\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
             wasm_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_wasm_base.wasm\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
-            printf 'PCK_CACHE=%s\\nWASM_CACHE=%s\\n' \"\$pck_cache\" \"\$wasm_cache\"
+            audio_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_audio_worklet\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
+            position_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_position_worklet\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
+            printf 'PCK_CACHE=%s\\nWASM_CACHE=%s\\nAUDIO_WORKLET_CACHE=%s\\nPOSITION_WORKLET_CACHE=%s\\n' \"\$pck_cache\" \"\$wasm_cache\" \"\$audio_cache\" \"\$position_cache\"
             echo \"\$pck_cache\" | grep -Fq immutable
             echo \"\$wasm_cache\" | grep -Fq immutable
+            echo \"\$audio_cache\" | grep -Fq immutable
+            echo \"\$position_cache\" | grep -Fq immutable
           "
 
           page_status=000
