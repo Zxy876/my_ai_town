@@ -6,6 +6,9 @@ const RESIDENT_ID := "resident-lin-lan"
 
 
 func _initialize() -> void:
+	_test_runtime_observation_forms_one_idempotent_memory_node()
+	_test_organization_enriches_a_raw_node_without_reinforcement()
+	_test_reflection_forms_a_traceable_idempotent_cognitive_node()
 	_test_conversation_forms_firsthand_and_hearsay_memories()
 	_test_repeated_claim_updates_in_place()
 	_test_unrelated_reply_from_same_speaker_stays_separate()
@@ -19,8 +22,154 @@ func _initialize() -> void:
 	_test_reported_conflict_stays_hearsay()
 	_test_capacity_converges_oldest_settled_memory()
 	_test_capacity_protects_key_old_memories()
+	_test_capacity_protects_scenario_u0_root()
 	_test_capacity_fails_when_every_memory_is_protected()
 	_finish_suite("RESIDENT_FORMAL_MEMORY_BUILDER_PASS")
+
+
+func _test_runtime_observation_forms_one_idempotent_memory_node() -> void:
+	var evidence := _runtime_observation_evidence(
+		"observation-u-minus-1",
+		"诊所排队时，我又漏记了一位病人的过敏史。",
+	)
+	var first := _build(_empty_archive(), _empty_log(), evidence)
+	_expect_ok(first, "a runtime observation immediately forms a formal node")
+	var first_archive := first.get("archive", {}) as Dictionary
+	var first_entries := first_archive.get("entries", []) as Array
+	_expect_equal(first_entries.size(), 1, "one percept forms exactly one cognitive node")
+	if first_entries.is_empty():
+		return
+	var entry := first_entries[0] as Dictionary
+	_expect_equal(
+		entry.get("subject"),
+		"诊所排队时，我又漏记了一位病人的过敏史。",
+		"the first-order node keeps the raw percept text",
+	)
+	_expect_equal(
+		entry.get("claim_root_id"),
+		"runtime_observation:observation-u-minus-1",
+		"the node keeps the observation as its stable claim root",
+	)
+	_expect(
+		(entry.get("evidence_refs", []) as Array).has(
+			"runtime_observation:observation-u-minus-1",
+		),
+		"the node is traceable to the delivered observation",
+	)
+	var second := _build(
+		first_archive,
+		first.get("intervention_log", {}) as Dictionary,
+		evidence,
+	)
+	_expect_ok(second, "replaying the same percept remains valid")
+	_expect_equal(second.get("changed"), false, "the same source is idempotent")
+	_expect_equal(
+		(second.get("archive", {}) as Dictionary).get("revision"),
+		first_archive.get("revision"),
+		"idempotent replay does not manufacture a new memory revision",
+	)
+
+
+func _test_organization_enriches_a_raw_node_without_reinforcement() -> void:
+	var evidence := _conversation_evidence(
+		"conversation-organized-meaning",
+		"我连续两次忘了核对名单。",
+		"",
+	)
+	var first := _build(_empty_archive(), _empty_log(), evidence)
+	var first_entry := (
+		((first.get("archive", {}) as Dictionary).get("entries", []) as Array)[0]
+	) as Dictionary
+	var confidence := int(first_entry.get("confidence", 0))
+	var organized := _build(
+		first.get("archive", {}) as Dictionary,
+		first.get("intervention_log", {}) as Dictionary,
+		evidence,
+		{
+			"important_memories": "唐小满提醒我连续两次忘了核对名单，这说明我在忙乱时会跳过核对。",
+			"relationships": "",
+			"current_thoughts": "",
+			"long_term_goals": "",
+			"short_term_goals": "",
+		},
+	)
+	_expect_ok(organized, "organization can attach meaning to an existing raw node")
+	var organized_entries := (
+		(organized.get("archive", {}) as Dictionary).get("entries", []) as Array
+	)
+	_expect_equal(organized_entries.size(), 1, "organization does not duplicate the percept node")
+	var organized_entry := organized_entries[0] as Dictionary
+	_expect(
+		String(organized_entry.get("interpretation", "")).contains("忙乱时会跳过核对"),
+		"organization enriches the node interpretation",
+	)
+	_expect_equal(
+		organized_entry.get("confidence"),
+		confidence,
+		"text organization is not mistaken for independent reinforcing evidence",
+	)
+
+
+func _test_reflection_forms_a_traceable_idempotent_cognitive_node() -> void:
+	var builder: RefCounted = BuilderScript.new(RESIDENT_ID)
+	var evidence := _runtime_observation_evidence(
+		"observation-reflection-1",
+		"我第三次因为只看眼前队伍而漏掉病历上的风险提示。",
+	)
+	var first := _build(_empty_archive(), _empty_log(), evidence)
+	var reflected := builder.call(
+		"add_reflection",
+		first.get("archive", {}) as Dictionary,
+		first.get("intervention_log", {}) as Dictionary,
+		{
+			"text": "我发现自己一忙就只处理眼前请求，容易忽略病历中的风险提示。",
+			"evidence_refs": ["runtime_observation:observation-reflection-1"],
+		},
+		{"day": 3, "clock": "18:40", "period": "傍晚"},
+	) as Dictionary
+	_expect_ok(reflected, "evidence-bound self-reflection forms a cognitive node")
+	var entries := (
+		(reflected.get("archive", {}) as Dictionary).get("entries", []) as Array
+	)
+	_expect_equal(entries.size(), 2, "reflection is distinct from its first-order evidence")
+	var reflection_entry: Dictionary = {}
+	for entry_value: Variant in entries:
+		var candidate := entry_value as Dictionary
+		if String(candidate.get("claim_root_id", "")).begins_with("reflection:"):
+			reflection_entry = candidate
+			break
+	_expect(not reflection_entry.is_empty(), "the higher-order node has a reflection identity")
+	_expect_equal(
+		reflection_entry.get("evidence_refs"),
+		["runtime_observation:observation-reflection-1"],
+		"reflection preserves its exact evidence lineage",
+	)
+	var replay := builder.call(
+		"add_reflection",
+		reflected.get("archive", {}) as Dictionary,
+		reflected.get("intervention_log", {}) as Dictionary,
+		{
+			"text": "我发现自己一忙就只处理眼前请求，容易忽略病历中的风险提示。",
+			"evidence_refs": ["runtime_observation:observation-reflection-1"],
+		},
+		{"day": 3, "clock": "18:40", "period": "傍晚"},
+	) as Dictionary
+	_expect_equal(replay.get("changed"), false, "replaying the same reflection is idempotent")
+	var reworded := builder.call(
+		"add_reflection",
+		reflected.get("archive", {}) as Dictionary,
+		reflected.get("intervention_log", {}) as Dictionary,
+		{
+			"text": "我忙起来容易忽略风险提示。",
+			"evidence_refs": ["runtime_observation:observation-reflection-1"],
+		},
+		{"day": 3, "clock": "18:40", "period": "傍晚"},
+	) as Dictionary
+	_expect_equal(
+		reworded.get("changed"),
+		false,
+		"rewording the same evidence-bound reflection cannot manufacture reinforcement",
+	)
 
 
 func _test_conversation_forms_firsthand_and_hearsay_memories() -> void:
@@ -481,6 +630,38 @@ func _test_capacity_fails_when_every_memory_is_protected() -> void:
 	)
 
 
+func _test_capacity_protects_scenario_u0_root() -> void:
+	var entries: Array = []
+	for index in 256:
+		entries.append(_capacity_entry(index, "past"))
+	var u0 := (entries[0] as Dictionary).duplicate(true)
+	u0["claim_root_id"] = "runtime_observation:scenario-u0-protected-root"
+	u0["evidence_refs"] = [
+		"runtime_observation:scenario-u0-protected-root",
+	]
+	entries[0] = u0
+	var archive := _empty_archive()
+	archive["revision"] = 256
+	archive["entries"] = entries
+	var result := _build(
+		archive,
+		_empty_log(),
+		_weather_evidence("capacity-u0-protected-weather"),
+	)
+	_expect_ok(result, "capacity convergence keeps the Scenario U0 root evidence")
+	var result_entries := (
+		result.get("archive", {}) as Dictionary
+	).get("entries", []) as Array
+	_expect(
+		not _entry_for_id(result_entries, "memory-capacity-000").is_empty(),
+		"Scenario U0 cannot be silently deleted after it stops influencing recall",
+	)
+	_expect(
+		_entry_for_id(result_entries, "memory-capacity-001").is_empty(),
+		"the oldest ordinary settled memory converges instead of U0",
+	)
+
+
 func _conflict_evidence(
 	event_id: String,
 	knowledge_kind: String,
@@ -616,6 +797,23 @@ func _conversation_evidence(
 			}],
 			"action_results": [],
 			"snapshot": {"time": {"day": 3, "clock": "18:35", "period": "傍晚"}},
+		},
+		"matched_intents": [],
+	}
+
+
+func _runtime_observation_evidence(observation_id: String, text: String) -> Dictionary:
+	return {
+		"wake_packet": {
+			"runtime_observations": [{
+				"observation_id": observation_id,
+				"text": text,
+			}],
+			"events": [],
+			"action_results": [],
+			"snapshot": {
+				"time": {"day": 3, "clock": "18:35", "period": "傍晚"},
+			},
 		},
 		"matched_intents": [],
 	}

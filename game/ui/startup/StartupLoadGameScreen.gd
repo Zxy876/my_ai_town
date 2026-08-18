@@ -9,6 +9,10 @@ signal action_blocked(intent: StringName, reason: String)
 const BUTTON_THEME := preload("res://ui/startup/StartupButtonImageTheme.gd")
 const UiViewModel := preload("res://ui/common/AiTownUiViewModel.gd")
 const UiNodeRetirement := preload("res://ui/common/AiTownUiNodeRetirement.gd")
+const PageTheme := preload(
+	"res://ui/resident_model_assignment/runtime/ResidentModelAssignmentTheme.gd"
+)
+const WebInputBridge := preload("res://ui/common/WebTextInputBridge.gd")
 const LOAD_GAME_IMAGE_THEME := preload(
 	"res://ui/startup/StartupLoadGameImageTheme.gd"
 )
@@ -39,6 +43,7 @@ const VALID_SLOT_STATES: Array[String] = [
 const OLDER_REVISION_SELECTION_DISABLED_REASON := (
 	"STARTUP_OLDER_REVISION_SELECTION_NOT_AVAILABLE"
 )
+const GLOBAL_INTENTION_MAX_CHARS := 2000
 const LOAD_GAME_VISUAL_ASSET_PATH := (
 	"res://assets/ui/startup/final/load_game/"
 	+ "load_game_open_paper_1672x941.png"
@@ -53,6 +58,15 @@ var _feedback: Label
 var _back_button: Button
 var _visual_atlas_texture: Texture2D
 var _delete_icon_texture: AtlasTexture
+var _pending_continue_slot: Dictionary = {}
+var _intention_modal_open := false
+var _intention_backdrop: ColorRect
+var _intention_edit: TextEdit
+var _intention_counter: Label
+var _intention_error: Label
+var _intention_direct_button: Button
+var _intention_apply_button: Button
+var _intention_web_input: WebTextInputBridge
 
 
 func _ready() -> void:
@@ -61,11 +75,17 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	theme = LOAD_GAME_IMAGE_THEME.create()
 	_build_interface()
+	_build_continue_intention_modal()
 	if not _view_model.is_empty():
 		_render()
 
 
+func _exit_tree() -> void:
+	_close_intention_web_input()
+
+
 func deactivate_modal_ownership() -> void:
+	_close_intention_web_input()
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_process_unhandled_input(false)
 	hide()
@@ -77,6 +97,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed(&"ui_cancel") or (
 		event is InputEventKey and (event as InputEventKey).keycode == KEY_ESCAPE
 	):
+		if _intention_modal_open:
+			_close_continue_intention_modal()
+			get_viewport().set_input_as_handled()
+			return
 		if request_back():
 			get_viewport().set_input_as_handled()
 
@@ -136,6 +160,9 @@ func get_contract_snapshot() -> Dictionary:
 		"ownsRecoveryConfirmation": false,
 		"ownsDeleteConfirmation": false,
 		"recoveryHandoffIntent": "session.continue_slot",
+		"supportsNextGlobalIntentionOnLoad": true,
+		"nextGlobalIntentionPayloadField": "nextGlobalIntentionText",
+		"nextGlobalIntentionMaxChars": GLOBAL_INTENTION_MAX_CHARS,
 		"functionalStatus": "functional_runtime_ready",
 		"runtimeVisualRole": "formal_image_asset_runtime",
 		"formalRuntimeVisualConnected": true,
@@ -170,6 +197,17 @@ func debug_request_delete_slot(slot_id: String) -> bool:
 		):
 			return _request_delete_slot(slot_value as Dictionary)
 	return _block(&"save.request_delete_slot", "STARTUP_SAVE_SLOT_ID_INVALID")
+
+
+func debug_confirm_pending_slot(next_intention_text := "") -> bool:
+	if _pending_continue_slot.is_empty():
+		return false
+	if next_intention_text.strip_edges().is_empty():
+		_enter_pending_slot_without_new_intention()
+	else:
+		_intention_edit.text = next_intention_text
+		_enter_pending_slot_with_new_intention()
+	return true
 
 
 func _validate_view_model(view_model: Dictionary) -> PackedStringArray:
@@ -273,6 +311,117 @@ func _build_interface() -> void:
 	)
 	_feedback.add_theme_font_size_override(&"font_size", 28)
 	_feedback.add_theme_color_override(&"font_color", Color("4e3826"))
+
+
+func _build_continue_intention_modal() -> void:
+	_intention_backdrop = ColorRect.new()
+	_intention_backdrop.name = "ContinueIntentionBackdrop"
+	_intention_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_intention_backdrop.color = PageTheme.OVERLAY
+	_intention_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	_intention_backdrop.visible = false
+	_intention_backdrop.z_index = 100
+	add_child(_intention_backdrop)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_intention_backdrop.add_child(center)
+	var panel := PanelContainer.new()
+	panel.name = "ContinueIntentionPanel"
+	panel.custom_minimum_size = Vector2(760, 600)
+	panel.add_theme_stylebox_override("panel", PageTheme.page_shell())
+	center.add_child(panel)
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 34)
+	margin.add_theme_constant_override("margin_top", 26)
+	margin.add_theme_constant_override("margin_right", 34)
+	margin.add_theme_constant_override("margin_bottom", 26)
+	panel.add_child(margin)
+	var stack := VBoxContainer.new()
+	stack.add_theme_constant_override("separation", 12)
+	margin.add_child(stack)
+
+	var title := Label.new()
+	title.name = "ContinueIntentionTitle"
+	title.text = "下一版共同意图"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.custom_minimum_size.y = 44
+	title.add_theme_font_size_override("font_size", 30)
+	title.add_theme_color_override("font_color", PageTheme.INK)
+	stack.add_child(title)
+	var field_label := Label.new()
+	field_label.name = "ContinueIntentionFieldLabel"
+	field_label.text = "全镇共同前提"
+	field_label.add_theme_font_size_override("font_size", 18)
+	field_label.add_theme_color_override("font_color", PageTheme.INK_MUTED)
+	stack.add_child(field_label)
+	_intention_edit = TextEdit.new()
+	_intention_edit.name = "ContinueIntentionEdit"
+	_intention_edit.placeholder_text = "写下这次继续运行时所有居民共同知晓的新意图"
+	_intention_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	_intention_edit.custom_minimum_size = Vector2(0, 250)
+	_intention_edit.add_theme_font_size_override("font_size", 20)
+	_intention_edit.add_theme_color_override("font_color", PageTheme.INK)
+	_intention_edit.add_theme_color_override(
+		"font_placeholder_color",
+		PageTheme.INK_MUTED,
+	)
+	_intention_edit.add_theme_color_override("caret_color", PageTheme.TERRACOTTA)
+	_intention_edit.add_theme_stylebox_override("normal", PageTheme.inset("normal"))
+	_intention_edit.add_theme_stylebox_override("focus", PageTheme.inset("selected"))
+	_intention_edit.text_changed.connect(_on_continue_intention_text_changed)
+	_intention_edit.resized.connect(_refresh_intention_web_input)
+	stack.add_child(_intention_edit)
+	_intention_web_input = WebInputBridge.new()
+	_intention_web_input.text_changed.connect(_on_continue_intention_web_text_changed)
+	_intention_web_input.cancel_requested.connect(_close_continue_intention_modal)
+	_intention_counter = Label.new()
+	_intention_counter.name = "ContinueIntentionCounter"
+	_intention_counter.text = "0 / %d" % GLOBAL_INTENTION_MAX_CHARS
+	_intention_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_intention_counter.add_theme_font_size_override("font_size", 16)
+	_intention_counter.add_theme_color_override("font_color", PageTheme.INK_MUTED)
+	stack.add_child(_intention_counter)
+	_intention_error = Label.new()
+	_intention_error.name = "ContinueIntentionError"
+	_intention_error.custom_minimum_size.y = 28
+	_intention_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_intention_error.add_theme_font_size_override("font_size", 17)
+	_intention_error.add_theme_color_override("font_color", PageTheme.TERRACOTTA_DARK)
+	stack.add_child(_intention_error)
+
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 14)
+	stack.add_child(actions)
+	var cancel_button := _modal_button("取消", "paper")
+	cancel_button.name = "ContinueIntentionCancelButton"
+	cancel_button.pressed.connect(_close_continue_intention_modal)
+	actions.add_child(cancel_button)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	actions.add_child(spacer)
+	_intention_direct_button = _modal_button("直接进入", "paper")
+	_intention_direct_button.name = "ContinueWithoutIntentionButton"
+	_intention_direct_button.pressed.connect(
+		_enter_pending_slot_without_new_intention,
+	)
+	actions.add_child(_intention_direct_button)
+	_intention_apply_button = _modal_button("使用新意图进入", "success")
+	_intention_apply_button.name = "ContinueWithIntentionButton"
+	_intention_apply_button.custom_minimum_size.x = 190
+	_intention_apply_button.pressed.connect(
+		_enter_pending_slot_with_new_intention,
+	)
+	actions.add_child(_intention_apply_button)
+
+
+func _modal_button(text_value: String, variant: String) -> Button:
+	var button := Button.new()
+	button.text = text_value
+	button.custom_minimum_size = Vector2(148, 54)
+	button.add_theme_font_size_override("font_size", 20)
+	PageTheme.apply_button(button, variant)
+	return button
 
 
 func _render() -> void:
@@ -685,7 +834,19 @@ func _request_slot(slot: Dictionary) -> bool:
 				else "SESSION_SAVE_CORRUPT"
 			)
 		return _block(intent, unavailable_reason)
-	intent_requested.emit(intent, {
+	if not overwrite_selection:
+		_open_continue_intention_modal(slot)
+		return true
+	_emit_slot_intent(slot, "")
+	return true
+
+
+func _emit_slot_intent(slot: Dictionary, next_intention_text: String) -> void:
+	var overwrite_selection := _is_overwrite_selection_mode()
+	var action_key := "selectOverwriteSlot" if overwrite_selection else "continueSlot"
+	var action := _action(action_key)
+	var intent := StringName(String(action.get("intent", "")))
+	var payload := {
 		"scope": "save",
 		"actionKey": action_key,
 		"revision": _revision,
@@ -696,8 +857,136 @@ func _request_slot(slot: Dictionary) -> bool:
 		"requiresRecoveryConfirmation": bool(
 			slot.get("requiresRecoveryConfirmation", false)
 		),
-	})
-	return true
+	}
+	if not next_intention_text.is_empty():
+		payload["nextGlobalIntentionText"] = next_intention_text
+	intent_requested.emit(intent, payload)
+
+
+func _open_continue_intention_modal(slot: Dictionary) -> void:
+	_pending_continue_slot = slot.duplicate(true)
+	_intention_modal_open = true
+	_intention_backdrop.visible = true
+	_intention_edit.text = ""
+	_intention_error.text = ""
+	_intention_direct_button.disabled = false
+	_intention_apply_button.disabled = false
+	_update_intention_counter()
+	if not _open_intention_web_input():
+		_intention_edit.grab_focus()
+
+
+func _close_continue_intention_modal() -> void:
+	_close_intention_web_input()
+	_intention_modal_open = false
+	_pending_continue_slot.clear()
+	if _intention_backdrop != null:
+		_intention_backdrop.visible = false
+	_focus_first_available.call_deferred()
+
+
+func _enter_pending_slot_without_new_intention() -> void:
+	if _pending_continue_slot.is_empty():
+		return
+	var slot := _pending_continue_slot.duplicate(true)
+	_close_intention_web_input()
+	_intention_modal_open = false
+	_intention_backdrop.visible = false
+	_pending_continue_slot.clear()
+	_emit_slot_intent(slot, "")
+
+
+func _enter_pending_slot_with_new_intention() -> void:
+	if _pending_continue_slot.is_empty():
+		return
+	_sync_intention_from_web()
+	var text_value := _intention_edit.text.strip_edges()
+	if text_value.is_empty():
+		_intention_error.text = "请填写下一版共同意图。"
+		if _intention_web_input != null and _intention_web_input.is_open():
+			_intention_web_input.focus()
+		else:
+			_intention_edit.grab_focus()
+		return
+	var slot := _pending_continue_slot.duplicate(true)
+	_intention_direct_button.disabled = true
+	_intention_apply_button.disabled = true
+	_close_intention_web_input()
+	_intention_modal_open = false
+	_intention_backdrop.visible = false
+	_pending_continue_slot.clear()
+	_emit_slot_intent(slot, text_value)
+
+
+func _on_continue_intention_text_changed() -> void:
+	if _intention_edit.text.length() > GLOBAL_INTENTION_MAX_CHARS:
+		_intention_edit.text = _intention_edit.text.left(
+			GLOBAL_INTENTION_MAX_CHARS,
+		)
+		_intention_edit.set_caret_line(_intention_edit.get_line_count() - 1)
+		_intention_edit.set_caret_column(
+			_intention_edit.get_line(
+				_intention_edit.get_line_count() - 1,
+			).length(),
+		)
+	_intention_error.text = ""
+	_update_intention_counter()
+
+
+func _on_continue_intention_web_text_changed(value: String) -> void:
+	if _intention_edit != null and _intention_edit.text != value:
+		_intention_edit.text = value
+		_on_continue_intention_text_changed()
+
+
+func _update_intention_counter() -> void:
+	if _intention_counter != null and _intention_edit != null:
+		_intention_counter.text = "%d / %d" % [
+			_intention_edit.text.length(),
+			GLOBAL_INTENTION_MAX_CHARS,
+		]
+
+
+func _open_intention_web_input() -> bool:
+	if _intention_web_input == null or not OS.has_feature("web"):
+		return false
+	_intention_edit.release_focus()
+	var opened := _intention_web_input.open(
+		_intention_edit,
+		_intention_edit.text,
+		{
+			"id": "continue-global-intention",
+			"ariaLabel": "下一版共同意图",
+			"maxChars": GLOBAL_INTENTION_MAX_CHARS,
+			"language": "zh-CN",
+			"color": "#55361f",
+			"caretColor": "#b64b2d",
+			"background": "#f8dca2",
+			"border": "2px solid #dc9829",
+		},
+	)
+	if opened:
+		_refresh_intention_web_input.call_deferred()
+	return opened
+
+
+func _close_intention_web_input() -> void:
+	if _intention_web_input != null:
+		_intention_web_input.close()
+
+
+func _refresh_intention_web_input() -> void:
+	if _intention_web_input != null and _intention_web_input.is_open():
+		_intention_web_input.refresh_rect()
+
+
+func _sync_intention_from_web() -> void:
+	if _intention_web_input == null or not _intention_web_input.is_open():
+		return
+	var value := _intention_web_input.get_text()
+	if _intention_edit.text != value:
+		_intention_edit.text = value
+		_on_continue_intention_text_changed()
 
 
 func _request_delete_slot(slot: Dictionary) -> bool:

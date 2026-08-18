@@ -92,6 +92,9 @@ const RESIDENT_REPLACEMENT := preload(
 const AGENT_SOUL_PROFILE := preload("res://agent/soul/AgentSoulProfile.gd")
 const PROVIDER_SERVICE := preload("res://world/integration/TownAgentProviderService.gd")
 const GATEWAY := preload("res://world/integration/TownWorldAgentGateway.gd")
+const EXPERIMENT_SCENARIO_STATE := preload(
+	"res://world/integration/TownExperimentScenarioState.gd"
+)
 const FORMAL_SLOT_ARCHIVER := preload(
 	"res://world/integration/TownFormalSlotArchiveService.gd"
 )
@@ -180,7 +183,7 @@ var _town_ui_canvas_layer: CanvasLayer
 var _avatar_hud: Control
 var _pause_host: Control
 var _town_ui_host: Control
-var _session_ui_service: RefCounted
+var _session_ui_service: TownSessionUiService
 var _audio_display_settings_service: AUDIO_DISPLAY_SETTINGS_SERVICE
 var _provider_settings_ui_service: PROVIDER_SETTINGS_SERVICE
 var _ui_page_projection_service: UI_PAGE_PROJECTION_SERVICE
@@ -255,6 +258,7 @@ var _replacement_admission_committed := false
 var _daily_auto_save_last_revision := 0
 var _daily_auto_save_failures: Array[Dictionary] = []
 var _daily_auto_save_inflight := false
+var _staged_experiment_scenario: Dictionary = {}
 
 
 func _ready() -> void:
@@ -277,6 +281,55 @@ func _ready() -> void:
 		FORMAL_RUNTIME_AUDIT_ENV
 	).strip_edges().is_empty()
 	_bind_current_scene.call_deferred()
+
+
+func configure_experiment_scenario(value: Variant) -> Dictionary:
+	if (
+		not _active_session_config.is_empty()
+		or is_instance_valid(_pending_runtime)
+		or is_instance_valid(_town_runtime)
+	):
+		return _failure("EXPERIMENT_SCENARIO_CONFIGURATION_LATE", false)
+	var validation := EXPERIMENT_SCENARIO_STATE.new().validate_scenario_definition(
+		value,
+	) as Dictionary
+	if not bool(validation.get("ok", false)):
+		return validation
+	var scenario := validation.get("scenario", {}) as Dictionary
+	var observations: Array[Dictionary] = []
+	for observation_value: Variant in scenario.get("u0Observations", []) as Array:
+		var observation := observation_value as Dictionary
+		observations.append({
+			"targetResidentId": observation.get("targetResidentId", ""),
+			"text": observation.get("rawText", ""),
+		})
+	_staged_experiment_scenario = {
+		"scenarioId": scenario.get("scenarioId", ""),
+		"episodeId": scenario.get("episodeId", ""),
+		"u0Observations": observations,
+	}
+	return {
+		"ok": true,
+		"errorCode": "",
+		"retryable": false,
+		"scenario": _staged_experiment_scenario.duplicate(true),
+	}
+
+
+func clear_experiment_scenario() -> Dictionary:
+	if (
+		not _active_session_config.is_empty()
+		or is_instance_valid(_pending_runtime)
+		or is_instance_valid(_town_runtime)
+	):
+		return _failure("EXPERIMENT_SCENARIO_CONFIGURATION_LATE", false)
+	var changed := not _staged_experiment_scenario.is_empty()
+	_staged_experiment_scenario.clear()
+	return {"ok": true, "changed": changed, "errorCode": "", "retryable": false}
+
+
+func get_staged_experiment_scenario() -> Dictionary:
+	return _staged_experiment_scenario.duplicate(true)
 
 
 func _notification(what: int) -> void:
@@ -1688,6 +1741,9 @@ func _on_startup_intent_requested(intent: StringName, payload: Dictionary) -> vo
 				_last_result = _failure("SESSION_CONTINUE_FORMAL_ONLY", false)
 			else:
 				var slot_id := String(payload.get("slotId", "")).strip_edges()
+				var next_global_intention_text := String(
+					payload.get("nextGlobalIntentionText", ""),
+				).strip_edges()
 				if slot_id.is_empty():
 					_last_result = _failure("STARTUP_SAVE_SLOT_ID_INVALID", false)
 					return
@@ -1698,6 +1754,8 @@ func _on_startup_intent_requested(intent: StringName, payload: Dictionary) -> vo
 					slot_id,
 					bool(payload.get("recoveryConfirmed", false))
 						or String(intent) == "session.confirm_recovery",
+					"",
+					next_global_intention_text,
 				)
 		"startup.back":
 			request_quit_game()
@@ -2022,10 +2080,16 @@ func _open_new_game_overwrite(
 func _open_continue_recovery(
 	discovery: Dictionary,
 	route_origin := "continue",
+	next_global_intention_text := "",
 ) -> void:
+	var continuation_payload := {}
+	if not next_global_intention_text.strip_edges().is_empty():
+		continuation_payload["nextGlobalIntentionText"] = (
+			next_global_intention_text.strip_edges()
+		)
 	_open_save_handling(
 		"continue_recovery",
-		{},
+		continuation_payload,
 		discovery,
 		route_origin,
 	)
@@ -2115,6 +2179,7 @@ func _on_new_game_overwrite_intent_requested(
 		"session.retry_restore", "session.confirm_recovery":
 			var recovery_mode := _pending_save_handling_mode
 			var route_origin := _pending_save_handling_origin
+			var recovery_payload := _pending_new_game_payload.duplicate(true)
 			var summary := (
 				_pending_new_game_discovery.get("summary", {}) as Dictionary
 			).duplicate(true)
@@ -2126,6 +2191,9 @@ func _on_new_game_overwrite_intent_requested(
 				String(summary.get("slotId", "")),
 				recovery_mode == "continue_recovery",
 				route_origin,
+				String(
+					recovery_payload.get("nextGlobalIntentionText", ""),
+				).strip_edges(),
 			)
 		"session.overwrite_for_new_game":
 			_confirm_new_game_overwrite()
@@ -3369,12 +3437,20 @@ func _open_resident_model_assignment(draft: Dictionary) -> void:
 	)
 	_connect_once(
 		page,
+		"initial_intention_requested",
+		_on_resident_model_assignment_initial_intention_requested,
+	)
+	_connect_once(
+		page,
 		"action_dispatch_started",
 		Callable(self, "_on_resident_model_assignment_action_dispatch_started"),
 	)
 	_resident_model_assignment_page = page
 	selection.set_process_unhandled_input(false)
 	selection.add_child(page)
+	var assignment_page := page as ResidentModelAssignmentScreen
+	if assignment_page != null:
+		assignment_page.set_experiment_scenario(_staged_experiment_scenario)
 
 
 func _configure_resident_model_assignment_service(draft: Dictionary) -> Dictionary:
@@ -3514,7 +3590,69 @@ func _on_resident_model_assignment_intent_requested(
 				_startup_ui_adapter.call(
 					"set_resident_model_assignment_startup_state",
 					"idle",
-				)
+					)
+
+
+func _on_resident_model_assignment_initial_intention_requested(
+	payload: Dictionary,
+) -> void:
+	var page := _resident_model_assignment_page as ResidentModelAssignmentScreen
+	if page == null or _resident_model_assignment_service == null:
+		return
+	if bool(payload.get("clear", false)):
+		var cleared := clear_experiment_scenario()
+		if bool(cleared.get("ok", false)):
+			page.accept_initial_intention_scenario({})
+		else:
+			page.reject_initial_intention_request(
+				"初始意图未能清除，请返回后重试。",
+			)
+		return
+	var text_value := String(payload.get("text", "")).strip_edges()
+	var view_model := _resident_model_assignment_service.get_view_model() as Dictionary
+	var available_resident_ids: Array[String] = []
+	for resident_value: Variant in (
+		(view_model.get("data", {}) as Dictionary).get("residents", []) as Array
+	):
+		if resident_value is Dictionary:
+			available_resident_ids.append(
+				String((resident_value as Dictionary).get("residentId", "")),
+			)
+	if available_resident_ids.is_empty():
+		page.reject_initial_intention_request("未找到本次入镇居民，请返回后重试。")
+		return
+	if text_value.is_empty() or text_value.length() > 2000:
+		page.reject_initial_intention_request("初始意图需为 1 至 2000 个字符。")
+		return
+	var scenario_id := String(
+		_staged_experiment_scenario.get("scenarioId", ""),
+	).strip_edges()
+	var episode_id := String(
+		_staged_experiment_scenario.get("episodeId", ""),
+	).strip_edges()
+	if scenario_id.is_empty():
+		scenario_id = "scenario-ui-%d" % _flow_generation
+	if episode_id.is_empty():
+		episode_id = "episode-common-%d" % _flow_generation
+	var u0_observations: Array[Dictionary] = []
+	for resident_id: String in available_resident_ids:
+		u0_observations.append({
+			"targetResidentId": resident_id,
+			"text": text_value,
+		})
+	var configured := configure_experiment_scenario({
+		"scenarioId": scenario_id,
+		"episodeId": episode_id,
+		"u0Observations": u0_observations,
+	})
+	if not bool(configured.get("ok", false)):
+		page.reject_initial_intention_request(
+			"初始意图未能保存，请检查内容后重试。",
+		)
+		return
+	page.accept_initial_intention_scenario(
+		configured.get("scenario", {}) as Dictionary,
+	)
 
 
 func _on_resident_model_assignment_action_dispatch_started(
@@ -3846,13 +3984,13 @@ func _bind_town_runtime(runtime: Node) -> void:
 		return
 	_town_ui_adapter = adapter
 	_session_ui_service = SESSION_UI_SERVICE.new()
-	var save_configuration := _session_ui_service.call(
-		"configure",
+	var save_configuration := _session_ui_service.configure(
 		runtime,
 		runtime.call("get_world_runtime"),
 		_agent_save_participant(),
 		_active_session_config,
-	) as Dictionary
+		_gateway,
+	)
 	var save_binding := adapter.call(
 		"bind_session_save_service",
 		_session_ui_service,
@@ -4388,7 +4526,8 @@ func _start_internal_new_game(draft: Dictionary) -> void:
 			"requestHost": self,
 			"useLiveModel": provider_id != "fake",
 				"enablePlayerAvatar": false,
-				"avatarInitialMode": "observer",
+			"avatarInitialMode": "observer",
+			"experimentScenario": _staged_experiment_scenario.duplicate(true),
 		},
 		Callable(self, "_on_bootstrap_completed").bind(_flow_generation)) as Dictionary
 	if not bool(begin_result.get("accepted", false)) and not bool(begin_result.get("ok", false)):
@@ -4481,7 +4620,8 @@ func _start_formal_new_game(draft: Dictionary) -> void:
 			"requestHost": self,
 			"useLiveModel": true,
 				"enablePlayerAvatar": false,
-				"avatarInitialMode": "observer",
+			"avatarInitialMode": "observer",
+			"experimentScenario": _staged_experiment_scenario.duplicate(true),
 		},
 		Callable(self, "_on_bootstrap_completed").bind(_flow_generation)) as Dictionary
 	if not bool(begin_result.get("accepted", false)) and not bool(begin_result.get("ok", false)):
@@ -4787,6 +4927,7 @@ func _start_formal_continue(
 	requested_slot_id := "",
 	recovery_confirmed := false,
 	route_kind_override := "",
+	next_global_intention_text := "",
 ) -> void:
 	if generation != _flow_generation:
 		return
@@ -4810,6 +4951,7 @@ func _start_formal_continue(
 			"load_game"
 			if not String(requested_slot_id).strip_edges().is_empty()
 			else "continue",
+			next_global_intention_text,
 		)
 		return
 	var route_kind := route_kind_override.strip_edges()
@@ -4825,6 +4967,7 @@ func _start_formal_continue(
 		"startup_load_game" if route_kind == "load_game" else "startup",
 		{
 			"slotId": String(requested_slot_id).strip_edges(),
+			"nextGlobalIntentionText": next_global_intention_text,
 			"intent": (
 				"session.continue_slot"
 				if route_kind == "load_game"
@@ -4884,8 +5027,7 @@ func _start_formal_continue(
 		_publish_startup_result(provider_configuration)
 		return
 	_advance_town_entry_loading(0.34, "正在检查居民连接…")
-	var health_started := _provider_service.call(
-		"request_health_check",
+	var health_started := _provider_service.request_health_check(
 		bindings.duplicate(true),
 		Callable(self, "_on_formal_continue_provider_health_completed").bind(
 			generation,
@@ -4894,6 +5036,7 @@ func _start_formal_continue(
 			identities.duplicate(true),
 			bindings.duplicate(true),
 			resident_names.duplicate(),
+			next_global_intention_text,
 		),
 	) as Dictionary
 	if not bool(health_started.get("accepted", false)):
@@ -4908,6 +5051,7 @@ func _on_formal_continue_provider_health_completed(
 	identities: Array,
 	bindings: Array,
 	resident_names: Array,
+	next_global_intention_text: String,
 ) -> void:
 	if generation != _flow_generation:
 		return
@@ -5012,14 +5156,14 @@ func _on_formal_continue_provider_health_completed(
 		_discard_pending_runtime()
 		_publish_startup_result(startup_result)
 		return
-	var restore_service := SESSION_UI_SERVICE.new()
-	var service_result := restore_service.call(
-		"configure",
+	var restore_service: TownSessionUiService = SESSION_UI_SERVICE.new()
+	var service_result := restore_service.configure(
 		runtime,
 		runtime.call("get_world_runtime"),
 		_agent_save_participant(),
 		restored_session_config,
-	) as Dictionary
+		_gateway,
+	)
 	if not bool(service_result.get("ok", false)):
 		_discard_pending_runtime()
 		_publish_startup_result(service_result)
@@ -5046,13 +5190,47 @@ func _on_formal_continue_provider_health_completed(
 			_discard_pending_runtime()
 			_publish_startup_result(completion)
 			return
-	restored_session_config["restorePending"] = false
-	restored_session_config["saveRevision"] = int(
+	var active_save_revision := int(
 		(restored.get("context", {}) as Dictionary).get(
 			"save_revision",
 			restore_revision,
-		)
+		),
 	)
+	var continuation_text := next_global_intention_text.strip_edges()
+	if not continuation_text.is_empty():
+		_advance_town_entry_loading(0.92, "正在写入下一版共同意图…")
+		var continuation := _gateway.stage_global_intent_after_restore(
+			{
+				"text": continuation_text,
+				"sessionId": session_id,
+				"sourceSaveRevision": active_save_revision,
+			},
+		) as Dictionary
+		if not bool(continuation.get("ok", false)):
+			_discard_pending_runtime()
+			_publish_startup_result(continuation)
+			return
+		restored["globalIntentContinuation"] = continuation.duplicate(true)
+		if bool(continuation.get("changed", false)):
+			var continuation_save := restore_service.create_save({
+				"reason": "global_intent_continuation",
+			}) as Dictionary
+			if not bool(continuation_save.get("ok", false)):
+				_discard_pending_runtime()
+				_publish_startup_result(continuation_save)
+				return
+			active_save_revision = int(
+				(continuation_save.get("context", {}) as Dictionary).get(
+					"save_revision",
+					active_save_revision,
+				),
+			)
+			restored["continuationSave"] = continuation_save.duplicate(true)
+			var dispatch := _gateway.dispatch_pending_global_intent() as Dictionary
+			if not bool(dispatch.get("ok", false)):
+				restored["globalIntentDispatchWarning"] = dispatch.duplicate(true)
+	restored_session_config["restorePending"] = false
+	restored_session_config["saveRevision"] = active_save_revision
 	restored_session_config["identityStatus"] = "confirmed"
 	_active_session_config = restored_session_config.duplicate(true)
 	_pending_continue_notice = (
@@ -5104,6 +5282,9 @@ func _enter_pending_town(generation: int) -> void:
 	if not bool(startup_result.get("ok", false)):
 		_publish_resident_model_assignment_startup_failure(startup_result)
 		return
+	# Only a mounted, successfully started Town owns the activated Scenario.
+	# Startup failures keep the player's initial intention available for retry.
+	_staged_experiment_scenario.clear()
 	_pending_runtime = null
 	get_tree().current_scene = runtime
 	_complete_resident_model_assignment_town_transition()
@@ -5302,6 +5483,7 @@ func _complete_in_session_load_game(
 		slot_id,
 		recovery_confirmed,
 		"load_game",
+		String(payload.get("nextGlobalIntentionText", "")).strip_edges(),
 	)
 
 

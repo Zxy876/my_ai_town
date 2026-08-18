@@ -20,6 +20,9 @@ const REQUIRED_PROVIDER_METHODS: Array[String] = [
 ]
 const HOST_ROUTING_REQUIRED := "PROVIDER_SETTINGS_HOST_ROUTING_REQUIRED"
 const TEST_NO_NETWORK_ENV := "AI_TOWN_PROVIDER_TEST_NO_NETWORK"
+const WEB_MANAGED_PROVIDER_ID := "deepseek"
+const WEB_MANAGED_MODEL_ID := "deepseek-v4-flash"
+const WEB_PROXY_CLIENT_TOKEN := "ai-town-web-server-managed"
 const PROVIDER_DISPLAY_NAMES := {
 	"deepseek": "DeepSeek",
 	"kimi": "Kimi",
@@ -72,6 +75,7 @@ var _request_sequence := 0
 var _active_health_request_id := ""
 var _health_configuration_generation := 0
 var _dirty_health_providers: Dictionary = {}
+var _web_managed_deepseek := false
 
 
 func configure_store(path: String) -> Dictionary:
@@ -257,6 +261,15 @@ func reveal_saved_api_key(provider_id_value: Variant) -> Dictionary:
 	var provider_id := provider_id_value as String
 	if _provider_from_confirmed(provider_id).is_empty():
 		return _failure("PROVIDER_SETTINGS_PROVIDER_UNKNOWN", false)
+	if _web_managed_deepseek and provider_id == WEB_MANAGED_PROVIDER_ID:
+		return {
+			"ok": true,
+			"errorCode": "",
+			"retryable": false,
+			"saved": true,
+			"apiKey": "",
+			"serverManaged": true,
+		}
 	var revealed := (
 		_credential_store.call("api_key", provider_id) as Dictionary
 	)
@@ -468,8 +481,13 @@ func _load_public_snapshot() -> Dictionary:
 			"external": bool(source.get("external", false)),
 			"key": {
 				"saved": has_saved_key,
-				"maskedValue": _masked_key(
-					String(_credential_keys.get(provider_id, ""))
+				"maskedValue": (
+					"服务器已配置"
+					if _web_managed_deepseek and provider_id == WEB_MANAGED_PROVIDER_ID
+					else _masked_key(String(_credential_keys.get(provider_id, "")))
+				),
+				"serverManaged": (
+					_web_managed_deepseek and provider_id == WEB_MANAGED_PROVIDER_ID
 				),
 				"status": "saved" if has_saved_key else "missing",
 				"errorCode": "" if has_saved_key else "PROVIDER_API_KEY_REQUIRED",
@@ -960,8 +978,39 @@ func _load_stored_config() -> Dictionary:
 	var migration_result := _migrate_plaintext_credentials()
 	if not bool(migration_result.get("ok", false)):
 		return migration_result
+	_apply_web_proxy_defaults()
 	_selected_provider_id = String(_stored_config.get("selectedProviderId", ""))
 	return {"ok": true, "errorCode": "", "retryable": false}
+
+
+func _apply_web_proxy_defaults(force_web := false) -> void:
+	_web_managed_deepseek = false
+	if not force_web and not OS.has_feature("web"):
+		return
+	var selected_models := (
+		_stored_config.get("selectedModelByProvider", {}) as Dictionary
+	)
+	var providers := _stored_config.get("providers", {}) as Dictionary
+	var selected_provider := String(
+		_stored_config.get("selectedProviderId", "")
+	).strip_edges()
+	if selected_provider.is_empty() and selected_models.is_empty() and providers.is_empty():
+		selected_provider = WEB_MANAGED_PROVIDER_ID
+		selected_models[WEB_MANAGED_PROVIDER_ID] = WEB_MANAGED_MODEL_ID
+		providers[WEB_MANAGED_PROVIDER_ID] = {"enabled": true}
+		_stored_config["selectedProviderId"] = selected_provider
+		_stored_config["selectedModelByProvider"] = selected_models
+		_stored_config["providers"] = providers
+	var deepseek_config := (
+		providers.get(WEB_MANAGED_PROVIDER_ID, {}) as Dictionary
+	)
+	if (
+		providers.has(WEB_MANAGED_PROVIDER_ID)
+		and String(deepseek_config.get("endpoint", "")).strip_edges().is_empty()
+		and not _credential_keys.has(WEB_MANAGED_PROVIDER_ID)
+	):
+		_credential_keys[WEB_MANAGED_PROVIDER_ID] = WEB_PROXY_CLIENT_TOKEN
+		_web_managed_deepseek = true
 
 
 func _persist_candidate_and_reconfigure(candidate: Dictionary) -> Dictionary:
@@ -1201,13 +1250,30 @@ func _base_view_model(
 
 func _actions(data: Dictionary) -> Dictionary:
 	var has_providers := not (data.get("providers", []) as Array).is_empty()
+	var selected_provider_id := String(data.get("selectedProviderId", ""))
+	var selected_is_server_managed := (
+		_web_managed_deepseek
+		and selected_provider_id == WEB_MANAGED_PROVIDER_ID
+	)
 	return {
 		"back": _action("provider_settings.back", false, HOST_ROUTING_REQUIRED),
 		"selectProvider": _action("provider_settings.select_provider", has_providers),
 		"setProviderEnabled": _action("provider_settings.set_enabled", has_providers),
-		"saveKey": _action("provider_settings.save_key", has_providers),
-		"deleteKey": _action("provider_settings.delete_key", has_providers),
-		"saveBaseUrl": _action("provider_settings.save_base_url", has_providers),
+		"saveKey": _action(
+			"provider_settings.save_key",
+			has_providers and not selected_is_server_managed,
+			"PROVIDER_SETTINGS_SERVER_MANAGED" if selected_is_server_managed else "",
+		),
+		"deleteKey": _action(
+			"provider_settings.delete_key",
+			has_providers and not selected_is_server_managed,
+			"PROVIDER_SETTINGS_SERVER_MANAGED" if selected_is_server_managed else "",
+		),
+		"saveBaseUrl": _action(
+			"provider_settings.save_base_url",
+			has_providers and not selected_is_server_managed,
+			"PROVIDER_SETTINGS_SERVER_MANAGED" if selected_is_server_managed else "",
+		),
 		"selectModel": _action("provider_settings.select_model", has_providers),
 		"checkConnection": _action("provider_settings.check_connection", has_providers, "PROVIDER_SETTINGS_PROVIDER_REQUIRED"),
 	}

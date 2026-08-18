@@ -185,9 +185,10 @@ static func validate_wake_packet(value: Variant) -> Array[String]:
 		wake,
 		[
 			"decision_id",
-			"snapshot",
-			"events",
-			"action_results",
+				"snapshot",
+				"events",
+				"runtime_observations",
+				"action_results",
 			"social_response_results",
 		],
 		"wake",
@@ -197,7 +198,17 @@ static func validate_wake_packet(value: Variant) -> Array[String]:
 	var snapshot := _require_dictionary(wake, "snapshot", "snapshot", errors)
 	if not snapshot.is_empty():
 		AgentContractSnapshot._validate_snapshot(snapshot, errors)
-	AgentContractEvents._validate_events(_require_array(wake, "events", "events", errors), errors)
+		AgentContractEvents._validate_events(_require_array(wake, "events", "events", errors), errors)
+	if wake.has("runtime_observations"):
+		AgentContractRuntimeObservations.validate(
+			_require_array(
+				wake,
+				"runtime_observations",
+				"runtime_observations",
+				errors,
+			),
+			errors,
+		)
 	AgentContractEvents._validate_action_results(
 		_require_array(wake, "action_results", "action_results", errors),
 		errors,
@@ -834,4 +845,3 @@ static func _require_string(
 		errors.append("%s 必须是文本" % path)
 		return ""
 	return String(data[key])
-

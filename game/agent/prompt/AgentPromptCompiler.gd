@@ -107,6 +107,8 @@ func _build_dynamic_context(
 %s
 
 %s
+
+%s
 </wake_context>
 
 <retry_correction>
@@ -125,6 +127,9 @@ func _build_dynamic_context(
 			(
 				wake_packet.get("snapshot", {}) as Dictionary
 			).get("social_matters", []) as Array,
+		),
+		_render_runtime_observations(
+			wake_packet.get("runtime_observations", []) as Array,
 		),
 		_render_events(wake_packet.get("events", []) as Array),
 		_render_action_results(wake_packet.get("action_results", []) as Array),
@@ -435,6 +440,56 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 			_safe(person.get("doing", "")),
 			"（正在参与其他对话，当前不能搭话）" if not bool(person.get("available_for_conversation", true)) else "",
 		])
+		var details: Array[String] = []
+		var current_place_text := String(person.get("current_place", ""))
+		if not current_place_text.is_empty():
+			details.append("所在%s" % current_place_text)
+		var job_text := String(person.get("job", ""))
+		if not job_text.is_empty():
+			var workplace_text := String(person.get("workplace", ""))
+			details.append(
+				"职业%s%s" % [
+					job_text,
+					"（%s）" % workplace_text if not workplace_text.is_empty() else "",
+				]
+			)
+		var action_summary := String(person.get("current_action_summary", ""))
+		if not action_summary.is_empty():
+			var elapsed := int(person.get("elapsed_minutes", 0))
+			var remaining := int(person.get("estimated_free_in_minutes", 0))
+			var pieces: Array[String] = []
+			pieces.append(action_summary)
+			if elapsed > 0:
+				pieces.append("已进行%d分钟" % elapsed)
+			if remaining > 0:
+				pieces.append("预计%d分钟后结束" % remaining)
+			details.append("、".join(pieces))
+		var partner := String(person.get("active_conversation_with", ""))
+		if not partner.is_empty():
+			details.append("正在与%s交谈" % partner)
+		var nearby_of_nearby := person.get("nearby_of_nearby", []) as Array
+		if not nearby_of_nearby.is_empty():
+			details.append("周围还有%s" % "、".join(nearby_of_nearby))
+		var service_wait := person.get("is_waiting_service", {}) as Dictionary
+		if not service_wait.is_empty():
+			var kind := String(service_wait.get("kind", "服务"))
+			var waited := int(service_wait.get("waited_minutes", 0))
+			var ahead := int(service_wait.get("ahead_count", 0))
+			var in_progress := int(service_wait.get("in_progress_count", 0))
+			var staffed := int(service_wait.get("workers_staffed", 0))
+			var place_for_wait := String(service_wait.get("place_id", ""))
+			var wait_pieces: Array[String] = []
+			wait_pieces.append("正在等待%s" % kind)
+			if not place_for_wait.is_empty():
+				wait_pieces.append("地点%s" % place_for_wait)
+			if waited > 0:
+				wait_pieces.append("已等%d分钟" % waited)
+			wait_pieces.append("前面还有%d人" % ahead)
+			wait_pieces.append("正在处理%d单" % in_progress)
+			wait_pieces.append("在岗%d人" % staffed)
+			details.append("；".join(wait_pieces))
+		if not details.is_empty():
+			lines.append("  %s" % "；".join(details))
 	var visible_props := place.get("visible_props", []) as Array
 	lines.append(
 		"眼前可见物件：%s（可见不等于本轮可以操作）。"
@@ -571,7 +626,7 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 			)
 			lines.append(
 				"  - 必须找到该收件人并用搭话说出这段文字才算送达；"
-				+ "走路、整理投递袋或对别人说都不能完成。",
+                               +"走路、整理投递袋或对别人说都不能完成。",
 			)
 		var service_request := (
 			task.get("service_request", {}) as Dictionary
@@ -580,7 +635,7 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 			lines.append(
 				(
 					"  - 服务请求：%s在%s提出%s；事项%s；物品%s；"
-					+ "目标地点%s；当前%s%s。"
+                                       +"目标地点%s；当前%s%s。"
 				)
 				% [
 					_person(
@@ -624,9 +679,9 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 				lines.append(
 					(
 						"  - 医患对话：状态%s，已尝试%d次。患者正在诊所等待，这是一项真实的当前工作。"
-						+ "如果准备处理，下一步先用“搭话”联系上面指定的患者；不要用看诊、接受检查、配药、"
-						+ "待着或普通物件动作冒充问诊。完成对话后再选择 World 开放的实际检查；"
-						+ "对话内容不能直接算作诊断、治疗或痊愈。"
+										+ "如果准备处理，下一步先用“搭话”联系上面指定的患者；不要用看诊、接受检查、配药、"
+										+ "待着或普通物件动作冒充问诊。完成对话后再选择 World 开放的实际检查；"
+										+ "对话内容不能直接算作诊断、治疗或痊愈。"
 					)
 					% [
 						_safe(medical_dialogue.get("status", "")),
@@ -701,8 +756,8 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 		lines.append(
 			(
 				"当前已有能推进真实职业任务的活动，应优先处理。"
-				+ "附近有同事、熟人或顾客时仍可围绕眼前工作自然说几句，"
-				+ "但不要虚构尚未完成的结果；真正推进任务必须选择上面标出的工作活动。"
+						+ "附近有同事、熟人或顾客时仍可围绕眼前工作自然说几句，"
+						+ "但不要虚构尚未完成的结果；真正推进任务必须选择上面标出的工作活动。"
 			),
 		)
 	var service_control := place.get("service_control", {}) as Dictionary
@@ -776,7 +831,7 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 				lines.append(
 					(
 						"你是患者。照常自由表达，同时必须在 medical_response 中选择%s；"
-						+ "describe 表示愿意描述，decline 表示不愿描述。"
+                                               +"describe 表示愿意描述，decline 表示不愿描述。"
 					)
 					% _join(response_options),
 				)
@@ -896,6 +951,33 @@ func _render_events(events: Array) -> String:
 	return "\n".join(lines)
 
 
+func _render_runtime_observations(observations: Array) -> String:
+	if observations.is_empty():
+		return ""
+	var initial_intentions: Array[String] = []
+	var ordinary_observations: Array[String] = []
+	for observation_value: Variant in observations:
+		if not observation_value is Dictionary:
+			continue
+		var observation := observation_value as Dictionary
+		var rendered := "- %s" % _safe(observation.get("text", ""))
+		if String(observation.get("observation_id", "")).begins_with("scenario-u0-"):
+			initial_intentions.append(rendered)
+		else:
+			ordinary_observations.append(rendered)
+	var lines: Array[String] = []
+	if not initial_intentions.is_empty():
+		lines.append("[进入世界前共同确定的初始意图]")
+		lines.append_array(initial_intentions)
+		lines.append("- 这是需要结合你的身份与现实条件持续推进的共同意图，不代表事情已经完成。")
+	if not ordinary_observations.is_empty():
+		if not lines.is_empty():
+			lines.append("")
+		lines.append("[刚刚注意到的信息]")
+		lines.append_array(ordinary_observations)
+	return "\n".join(lines)
+
+
 func _render_action_results(results: Array) -> String:
 	var lines: Array[String] = ["[动作结果]"]
 	if results.is_empty():
@@ -992,7 +1074,7 @@ func _render_constraints(constraints: Dictionary) -> String:
 	if bool(post_injury_reaction.get("required", false)):
 		lines.append(
 			"受击后的首轮反应是必选项：只能提交当面质问攻击者，或直接去诊所；"
-			+ "不能继续原动作，也不能先做其他事"
+                       +"不能继续原动作，也不能先做其他事"
 		)
 	var medical_response := constraints.get(
 		"medical_response",
@@ -1002,7 +1084,7 @@ func _render_constraints(constraints: Dictionary) -> String:
 		lines.append(
 			(
 				"必填医患回应：medical_response 必须是对象，不能是文本或 null；"
-				+ "字段 %s；request_id 必须为 %s；response_kind 只能从 %s 选择"
+                               +"字段 %s；request_id 必须为 %s；response_kind 只能从 %s 选择"
 			)
 			% [
 				_join(medical_response.get("fields", [])),
@@ -1108,11 +1190,11 @@ func _render_constraints(constraints: Dictionary) -> String:
 			lines.append(
 				(
 					"  - 答应时结构示例：{\"decision_id\":\"当前决定编号\","
-					+ "\"handling\":\"replace_current\",\"action\":{\"action_id\":"
-					+ "\"当前允许前缀-答话\",\"type\":\"答话\",\"conversation_id\":"
-					+ "\"当前对话编号\",\"say\":\"明确答应的话\",\"narration\":"
-					+ "\"同时表现\",\"photos\":[],\"end\":true},"
-					+ "\"conversation_follow_up\":{\"option_id\":\"%s\"}}"
+										+ "\"handling\":\"replace_current\",\"action\":{\"action_id\":"
+										+ "\"当前允许前缀-答话\",\"type\":\"答话\",\"conversation_id\":"
+										+ "\"当前对话编号\",\"say\":\"明确答应的话\",\"narration\":"
+										+ "\"同时表现\",\"photos\":[],\"end\":true},"
+										+ "\"conversation_follow_up\":{\"option_id\":\"%s\"}}"
 				)
 				% _safe(example_option.get("option_id", ""))
 			)

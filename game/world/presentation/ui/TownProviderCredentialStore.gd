@@ -9,6 +9,7 @@ const PROVIDER_STORE_FILES := preload(
 	"res://world/presentation/ui/TownProviderStoreFiles.gd"
 )
 const DEFAULT_PATH := "user://provider_credentials.enc"
+const WEB_DEVICE_ID_PATH := "user://provider_credentials.web_device_id"
 const SCHEMA_VERSION := 1
 const CREDENTIAL_NAMESPACE := "ai-town.provider-credentials.v1"
 
@@ -266,7 +267,14 @@ func _replace_validated_file(
 
 
 func _encryption_password() -> Dictionary:
-	var device_id := OS.get_unique_id().strip_edges()
+	var device_id := ""
+	if OS.has_feature("web"):
+		var web_device_id := _load_or_create_web_device_id(WEB_DEVICE_ID_PATH)
+		if not bool(web_device_id.get("ok", false)):
+			return web_device_id
+		device_id = String(web_device_id.get("deviceId", ""))
+	else:
+		device_id = OS.get_unique_id().strip_edges()
 	if device_id.is_empty():
 		return _failure("PROVIDER_CREDENTIAL_DEVICE_ID_UNAVAILABLE")
 	var project_name := String(
@@ -276,6 +284,53 @@ func _encryption_password() -> Dictionary:
 		"%s|%s|%s" % [CREDENTIAL_NAMESPACE, project_name, device_id]
 	).sha256_text()
 	return _success({"password": password})
+
+
+func _load_or_create_web_device_id(path: String) -> Dictionary:
+	if FileAccess.file_exists(path):
+		var existing_file := FileAccess.open(path, FileAccess.READ)
+		if existing_file == null:
+			return _failure("PROVIDER_CREDENTIAL_DEVICE_ID_UNAVAILABLE")
+		var existing_id := existing_file.get_as_text().strip_edges()
+		var read_error := existing_file.get_error()
+		existing_file = null
+		if read_error != OK or not _web_device_id_is_valid(existing_id):
+			return _failure("PROVIDER_CREDENTIAL_DEVICE_ID_UNAVAILABLE")
+		return _success({"deviceId": existing_id})
+
+	var random_bytes := Crypto.new().generate_random_bytes(32)
+	if random_bytes.size() != 32:
+		return _failure("PROVIDER_CREDENTIAL_DEVICE_ID_UNAVAILABLE")
+	var generated_id := random_bytes.hex_encode()
+	var temporary_path := "%s.tmp" % path
+	_remove_file_if_present(temporary_path)
+	var temporary_file := FileAccess.open(temporary_path, FileAccess.WRITE)
+	if temporary_file == null:
+		return _failure("PROVIDER_CREDENTIAL_DEVICE_ID_UNAVAILABLE")
+	temporary_file.store_string(generated_id)
+	temporary_file.flush()
+	var write_error := temporary_file.get_error()
+	temporary_file = null
+	if write_error != OK:
+		_remove_file_if_present(temporary_path)
+		return _failure("PROVIDER_CREDENTIAL_DEVICE_ID_UNAVAILABLE")
+	var rename_error := DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(temporary_path),
+		ProjectSettings.globalize_path(path),
+	)
+	if rename_error != OK:
+		_remove_file_if_present(temporary_path)
+		return _failure("PROVIDER_CREDENTIAL_DEVICE_ID_UNAVAILABLE")
+	return _success({"deviceId": generated_id})
+
+
+func _web_device_id_is_valid(device_id: String) -> bool:
+	if device_id.length() != 64:
+		return false
+	for character: String in device_id:
+		if character not in "0123456789abcdef":
+			return false
+	return true
 
 
 func _provider_id_is_valid(provider_id: String) -> bool:

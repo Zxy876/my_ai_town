@@ -402,6 +402,7 @@ class FakeGateway:
 	var fail_inner_request := false
 	var fail_memory_request := false
 	var last_memory_intervention: Dictionary = {}
+	var last_runtime_observation: Dictionary = {}
 
 	func get_resident_memory(_resident_id: String) -> Dictionary:
 		if fail_memory_request:
@@ -469,6 +470,15 @@ class FakeGateway:
 		last_memory_intervention = request.duplicate(true)
 		last_memory_intervention["residentId"] = resident_id
 		return {"ok": true, "formalMemoryRevision": 8}
+
+	func queue_runtime_observation(request: Dictionary) -> Dictionary:
+		last_runtime_observation = request.duplicate(true)
+		return {
+			"ok": true,
+			"observation": {
+				"observationId": String(request.get("observationId", "")),
+			},
+		}
 
 	func request_resident_inner_observation(
 		resident_id: String,
@@ -968,7 +978,73 @@ func _run() -> void:
 			"亲历",
 			"formal memory source is projected for the page",
 		)
+	var reflection_content := service.call(
+		"_resident_memory_content",
+		{
+			"formal_memories": [{
+				"memoryKey": "memory:self-vulnerability",
+				"subject": "我发现自己忙乱时会跳过核对。",
+				"interpretation": "忙乱会放大我的注意盲区。",
+				"state": "influencing",
+				"sourceKind": "firsthand",
+				"nodeKind": "reflection",
+				"confidence": 70,
+				"people": [],
+				"places": [],
+				"worldTime": {"day": 1, "clock": "09:20", "period": "上午"},
+			}],
+			"interventions": [],
+		},
+		true,
+		"all",
+		1,
+	) as Dictionary
+	var reflection_items := reflection_content.get("items", []) as Array
+	_expect_equal(reflection_items.size(), 1, "reflection memory projects as one row")
+	if reflection_items.size() == 1:
+		_expect_equal(
+			(reflection_items[0] as Dictionary).get("sourceLabel"),
+			"自身反思",
+			"the memory page distinguishes self-reflection from an ordinary firsthand event",
+		)
 	var memory_actions := resident_detail.get("actions", {}) as Dictionary
+	_expect_equal(
+		(memory_actions.get("observeRuntime", {}) as Dictionary).get("enabled"),
+		true,
+		"resident detail exposes the runtime observation entry",
+	)
+	var observation_screen := RESIDENT_DETAIL_SCREEN.instantiate()
+	observation_screen.set_layout_profile_size_override(Vector2(1920, 1080))
+	root.add_child(observation_screen)
+	await process_frame
+	_expect(
+		observation_screen.apply_view_model(resident_detail),
+		"resident detail accepts the observation-enabled memory view model",
+	)
+	observation_screen.call("_on_section_action_requested")
+	await process_frame
+	var observation_panel := observation_screen.get_node_or_null("MemoryOperation")
+	_expect(
+		observation_panel != null and observation_panel.visible,
+		"memory page opens the runtime observation panel",
+	)
+	var type_tabs: Array[Button] = []
+	if observation_panel != null:
+		for child: Node in observation_panel.get_children():
+			if child is Button and String((child as Button).text).begins_with("U"):
+				type_tabs.append(child as Button)
+	_expect_equal(type_tabs.size(), 0, "observation panel exposes one unclassified entry")
+	var observation_input := observation_screen.get_node_or_null(
+		"MemoryOperation/MemoryOperationInput",
+	) as TextEdit
+	_expect(
+		observation_input != null and observation_input.size.y >= 400.0,
+		"single observation input uses the available panel space",
+	)
+	if OS.get_environment("AI_TOWN_VISUAL_HOLD") == "1":
+		await create_timer(15.0).timeout
+	observation_screen.queue_free()
+	await process_frame
 	_expect_equal(
 		((memory_actions.get("editMemory", {}) as Dictionary).get("payload", {}) as Dictionary).get("expectedRevision"),
 		7,
@@ -1004,6 +1080,20 @@ func _run() -> void:
 		gateway.last_memory_intervention.get("memoryKey"),
 		"memory:library-book",
 		"memory edit is forwarded through the World gateway",
+	)
+	service.dispatch("resident_detail.observe", {
+		"residentId": "resident-lin-lan",
+		"observationId": "ui-observation-1",
+		"text": "候诊区已经有人等了很久。",
+	})
+	_expect_equal(
+		gateway.last_runtime_observation,
+		{
+			"observationId": "ui-observation-1",
+			"targetResidentId": "resident-lin-lan",
+			"text": "候诊区已经有人等了很久。",
+		},
+		"resident observation is forwarded through the canonical gateway",
 	)
 	gateway.fail_memory_request = true
 	service.set_page_context("resident_action_menu", {

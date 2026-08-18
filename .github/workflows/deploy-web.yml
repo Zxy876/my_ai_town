@@ -1,0 +1,237 @@
+name: deploy-web
+
+on:
+  push:
+    branches:
+      - main
+      - agent/ews-global-u0
+    paths:
+      - game/**
+      - deploy/tencent/**
+      - .github/workflows/deploy-web.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-town-web-production
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.1"
+  AI_TOWN_PUBLIC_HOST: "43-128-24-238.sslip.io"
+  AI_TOWN_PUBLIC_URL: "https://43-128-24-238.sslip.io/ai-town/"
+
+jobs:
+  deploy:
+    name: 导出并发布 Web 版
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y curl openssh-client ripgrep rsync unzip
+
+      - name: Cache Godot and export templates
+        id: godot-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/godot-bin
+            ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable
+          key: godot-${{ env.GODOT_VERSION }}-linux-x86_64-web
+
+      - name: Download verified Godot release
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd /tmp
+          binary="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          templates="Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -fsSLO "$base/$binary"
+          curl -fsSLO "$base/$templates"
+          curl -fsSLO "$base/SHA512-SUMS.txt"
+          grep "  $binary$" SHA512-SUMS.txt | sha512sum --check -
+          grep "  $templates$" SHA512-SUMS.txt | sha512sum --check -
+
+          mkdir -p "$HOME/godot-bin"
+          unzip -q "$binary" -d /tmp/godot-extract
+          mv "/tmp/godot-extract/Godot_v${GODOT_VERSION}-stable_linux.x86_64" "$HOME/godot-bin/godot"
+          chmod +x "$HOME/godot-bin/godot"
+
+          template_dir="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$template_dir"
+          unzip -q "$templates" -d /tmp/godot-templates
+          mv /tmp/godot-templates/templates/* "$template_dir/"
+
+      - name: Add Godot to PATH
+        run: echo "$HOME/godot-bin" >> "$GITHUB_PATH"
+
+      - name: Cache Godot imports
+        uses: actions/cache@v6
+        with:
+          path: game/.godot
+          key: godot-import-web-${{ env.GODOT_VERSION }}-${{ hashFiles('game/**/*.import', 'game/project.godot') }}
+          restore-keys: |
+            godot-import-web-${{ env.GODOT_VERSION }}-
+
+      - name: Import project
+        run: |
+          set -o pipefail
+          godot --headless --path game --import 2>&1 | tee /tmp/godot-import.log
+          if grep -qE '^ERROR:|SCRIPT ERROR:|Parse Error:|Failed to load script' /tmp/godot-import.log; then
+            echo "::error::Godot import produced engine or script errors."
+            grep -nE '^ERROR:|SCRIPT ERROR:|Parse Error:|Failed to load script' /tmp/godot-import.log | head -20
+            exit 1
+          fi
+
+      - name: Verify Web provider behavior
+        run: |
+          godot --headless --path game --script res://tests/town_provider_credential_web_device_id_test.gd
+          godot --headless --path game --script res://tests/town_web_deepseek_defaults_test.gd
+
+      - name: Export Web build
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/web-build"
+          godot --headless --path game --export-release Web "$GITHUB_WORKSPACE/web-build/index.html"
+          test -s web-build/index.html
+          test -s web-build/index.pck
+          test -s web-build/index.wasm
+          test -s web-build/index.js
+          if [ -s web-build/index.audio.worklet.js ]; then
+            test -s web-build/index.audio.worklet.js
+            test -s web-build/index.audio.position.worklet.js
+          elif [ -s web-build/godot.audio.worklet.js ]; then
+            test -s web-build/godot.audio.worklet.js
+            test -s web-build/godot.audio.position.worklet.js
+          else
+            echo "::error::Neither index.*.worklet.js nor godot.*.worklet.js produced by Web export."
+            ls -la web-build
+            exit 1
+          fi
+          ls -la web-build
+
+      - name: Version large Web assets for persistent browser caching
+        run: |
+          set -euo pipefail
+          sh deploy/tencent/version-web-assets.sh web-build | tee /tmp/versioned-web-assets.env
+          test -L web-build/index.pck
+          test -L web-build/index.wasm
+          set +u
+          . /tmp/versioned-web-assets.env
+          set -u
+          test -n "$VERSIONED_AUDIO_WORKLET"
+          test -n "$VERSIONED_POSITION_WORKLET"
+          test -L web-build/index.audio.worklet.js
+          test -L web-build/index.audio.position.worklet.js
+          test -L web-build/godot.audio.worklet.js
+          test -L web-build/godot.audio.position.worklet.js
+          grep -Fq "\"$VERSIONED_AUDIO_WORKLET\"" web-build/index.js
+          grep -Fq "\"$VERSIONED_POSITION_WORKLET\"" web-build/index.js
+
+      - name: Ensure no API key entered the browser bundle
+        run: |
+          if rg -a -n 'sk-[A-Za-z0-9_-]{20,}' web-build; then
+            echo "::error::A credential-like value was found in the Web build."
+            exit 1
+          fi
+
+      - name: Configure deployment SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ai-town-deploy"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/ai-town-deploy" "$HOME/.ssh/known_hosts"
+
+      - name: Upload immutable release
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-i "$HOME/.ssh/ai-town-deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          destination="/opt/maieutic/public/ai-town-releases/$GITHUB_SHA"
+          ssh "${ssh_args[@]}" "$VPS_USER@$VPS_HOST" \
+            "mkdir -p '$destination' && find '$destination' -mindepth 1 -delete"
+          rsync -az --delete-delay --delay-updates \
+            --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
+            -e "ssh -i $HOME/.ssh/ai-town-deploy -o BatchMode=yes -o StrictHostKeyChecking=yes" \
+            web-build/ "$VPS_USER@$VPS_HOST:$destination/"
+
+      - name: Activate and verify release
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-i "$HOME/.ssh/ai-town-deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          remote_tmp_script="/tmp/ai-town-install-nginx-config.$GITHUB_SHA"
+          scp -i "$HOME/.ssh/ai-town-deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            deploy/tencent/ai-town-install-nginx-config \
+            "$VPS_USER@$VPS_HOST:$remote_tmp_script"
+          ssh "${ssh_args[@]}" "$VPS_USER@$VPS_HOST" \
+            "chmod 755 '$remote_tmp_script' && sudo -n mv '$remote_tmp_script' /usr/local/sbin/ai-town-install-nginx-config && sudo -n chown root:wheel /usr/local/sbin/ai-town-install-nginx-config 2>/dev/null || sudo -n chown root:root /usr/local/sbin/ai-town-install-nginx-config; sudo -n chmod 755 /usr/local/sbin/ai-town-install-nginx-config"
+          destination="/opt/maieutic/public/ai-town-releases/$GITHUB_SHA"
+          ssh "${ssh_args[@]}" "$VPS_USER@$VPS_HOST" "
+            set -eu
+            test -s '$destination/index.html'
+            test -s '$destination/index.pck'
+            test -s '$destination/index.wasm'
+            test -s '$destination/index.js'
+            test -s '$destination/index.audio.worklet.js'
+            test -s '$destination/index.audio.position.worklet.js'
+            test -s '$destination/godot.audio.worklet.js'
+            test -s '$destination/godot.audio.position.worklet.js'
+            sudo -n /usr/local/sbin/ai-town-install-nginx-config
+            sudo -n /usr/local/sbin/ai-town-activate '$GITHUB_SHA'
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}index.wasm')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}godot.audio.worklet.js')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}godot.audio.position.worklet.js')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}index.audio.worklet.js')\" = 200
+            test \"\$(curl -sS -o /dev/null -w '%{http_code}' --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' '${AI_TOWN_PUBLIC_URL}index.audio.position.worklet.js')\" = 200
+
+            versioned_pck=\$(sed -n 's/.*\"mainPack\":\"\([^\"]*\.pck\)\".*/\1/p' '$destination/index.html')
+            versioned_wasm_base=\$(sed -n 's/.*\"executable\":\"\([^\"]*\)\".*/\1/p' '$destination/index.html')
+            versioned_audio_worklet=\$(grep -oE '\"index\.[A-Za-z0-9]+\.audio\.worklet\.js\"' '$destination/index.js' | head -n 1 | tr -d '\"')
+            versioned_position_worklet=\$(grep -oE '\"index\.[A-Za-z0-9]+\.audio\.position\.worklet\.js\"' '$destination/index.js' | head -n 1 | tr -d '\"')
+            test -n \"\$versioned_pck\"
+            test -n \"\$versioned_wasm_base\"
+            test -n \"\$versioned_audio_worklet\"
+            test -n \"\$versioned_position_worklet\"
+            test -s '$destination/'\"\$versioned_pck\"
+            test -s '$destination/'\"\$versioned_wasm_base\".wasm
+            test -s '$destination/'\"\$versioned_audio_worklet\"
+            test -s '$destination/'\"\$versioned_position_worklet\"
+            pck_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_pck\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
+            wasm_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_wasm_base.wasm\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
+            audio_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_audio_worklet\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
+            position_cache=\$(curl -sSI --resolve '${AI_TOWN_PUBLIC_HOST}:443:127.0.0.1' \"${AI_TOWN_PUBLIC_URL}\$versioned_position_worklet\" | tr -d '\\r' | awk -F ': ' 'tolower(\$1) == \"cache-control\" {print \$2}')
+            printf 'PCK_CACHE=%s\\nWASM_CACHE=%s\\nAUDIO_WORKLET_CACHE=%s\\nPOSITION_WORKLET_CACHE=%s\\n' \"\$pck_cache\" \"\$wasm_cache\" \"\$audio_cache\" \"\$position_cache\"
+            echo \"\$pck_cache\" | grep -Fq immutable
+            echo \"\$wasm_cache\" | grep -Fq immutable
+            echo \"\$audio_cache\" | grep -Fq immutable
+            echo \"\$position_cache\" | grep -Fq immutable
+          "
+
+          page_status=000
+          wasm_status=000
+          for attempt in $(seq 1 30); do
+            page_status=$(curl -sS --connect-timeout 10 -o /dev/null -w '%{http_code}' "$AI_TOWN_PUBLIC_URL" || true)
+            wasm_status=$(curl -sS --connect-timeout 10 -o /dev/null -w '%{http_code}' "${AI_TOWN_PUBLIC_URL}index.wasm" || true)
+            [ "$page_status" = 200 ] && [ "$wasm_status" = 200 ] && break
+            sleep 2
+          done
+          test "$page_status" = 200
+          test "$wasm_status" = 200
+          echo "Published commit $GITHUB_SHA to $AI_TOWN_PUBLIC_URL"

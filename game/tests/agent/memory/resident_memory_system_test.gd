@@ -38,6 +38,8 @@ var _test_root := "%s/%d_%d" % [
 
 
 func _initialize() -> void:
+	_test_runtime_observation_is_persisted_before_organization_and_replay_is_idempotent()
+	_test_initial_intention_remains_a_long_term_recall_baseline()
 	_test_memory_state_round_trip_preserves_queue_and_pending_action()
 	_test_version_five_state_migrates_to_formal_memory_archives()
 	_test_unconfirmed_decision_can_be_discarded()
@@ -56,6 +58,85 @@ func _initialize() -> void:
 	_test_intervention_archive_round_trip()
 	_test_automatic_hearsay_aging_round_trip()
 	_finish_suite("AGENT_MEMORY_SYSTEM_PASS", [_test_root])
+
+
+func _test_runtime_observation_is_persisted_before_organization_and_replay_is_idempotent() -> void:
+	var system := _new_memory_system("immediate-runtime-observation")
+	var wake := TestData.wake_packet("runtime-observation-first")
+	wake["runtime_observations"] = [{
+		"observation_id": "runtime-observation-immediate-1",
+		"text": "我又一次在忙乱时漏掉了病历上的过敏提示。",
+	}]
+	var prepared := system.call("prepare_context", wake) as Dictionary
+	_expect_ok(prepared, "runtime observation prepares decision context")
+	_expect_equal(
+		prepared.has("organization_request"),
+		false,
+		"one percept does not require organization before it is stored",
+	)
+	_expect(
+		String(prepared.get("memory_prompt", "")).contains("漏掉了病历上的过敏提示"),
+		"the immediate node is recallable in the current decision",
+	)
+	var first_capture := system.call("capture_persistent_state") as Dictionary
+	_expect_ok(first_capture, "immediate percept state captures")
+	var first_state := first_capture.get("memory_state", {}) as Dictionary
+	var first_archive := first_state.get("formal_memory_archive", {}) as Dictionary
+	var first_entries := first_archive.get("entries", []) as Array
+	_expect_equal(first_entries.size(), 1, "one percept is already in the formal archive")
+	if first_entries.is_empty():
+		return
+	_expect_equal(
+		(first_entries[0] as Dictionary).get("evidence_refs"),
+		["runtime_observation:runtime-observation-immediate-1"],
+		"saved node preserves the runtime observation source",
+	)
+	var replay_wake := wake.duplicate(true)
+	replay_wake["decision_id"] = "runtime-observation-replay"
+	_expect_ok(
+		system.call("prepare_context", replay_wake),
+		"the same delivered observation can be replayed safely",
+	)
+	var replay_capture := system.call("capture_persistent_state") as Dictionary
+	var replay_archive := (
+		(replay_capture.get("memory_state", {}) as Dictionary).get(
+			"formal_memory_archive",
+			{},
+		) as Dictionary
+	)
+	_expect_equal(
+		(replay_archive.get("entries", []) as Array).size(),
+		1,
+		"replay does not duplicate the cognitive node",
+	)
+	_expect_equal(
+		replay_archive.get("revision"),
+		first_archive.get("revision"),
+		"replay does not fabricate a formal-memory revision",
+	)
+
+
+func _test_initial_intention_remains_a_long_term_recall_baseline() -> void:
+	var system := _new_memory_system("initial-intention-baseline")
+	var first_wake := TestData.wake_packet("initial-intention-first")
+	first_wake["runtime_observations"] = [{
+		"observation_id": "scenario-u0-long-term-baseline",
+		"text": "居民计划在傍晚共同举办欢迎派对。",
+	}]
+	var first := system.call("prepare_context", first_wake) as Dictionary
+	_expect_ok(first, "initial intention prepares the first decision context")
+	_expect(
+		String(first.get("memory_prompt", "")).contains("共同举办欢迎派对"),
+		"the player's initial intention is recallable immediately",
+	)
+	var unrelated_later_wake := TestData.wake_packet("initial-intention-later", 7)
+	unrelated_later_wake["snapshot"]["me"]["doing"] = "在工作坊整理木料"
+	var later := system.call("retrieve_context", unrelated_later_wake) as Dictionary
+	_expect_ok(later, "later unrelated cognition retrieves memory")
+	_expect(
+		String(later.get("memory_prompt", "")).contains("共同举办欢迎派对"),
+		"the initial intention remains a bounded long-term recall baseline",
+	)
 
 
 func _test_retrieve_context_reuses_formal_memory_snapshot() -> void:

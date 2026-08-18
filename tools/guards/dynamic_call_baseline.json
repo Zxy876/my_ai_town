@@ -1,12 +1,12 @@
 {
  "version": 1,
  "stats": {
-  "game/agent": 302,
-  "game/ui": 140,
-  "game/world/integration": 11,
+  "game/agent": 306,
+  "game/ui": 139,
+  "game/world/integration": 19,
   "game/world/maps": 20,
-  "game/world/presentation": 472,
-  "game/world/runtime": 8
+  "game/world/presentation": 492,
+  "game/world/runtime": 11
  },
  "entries": [
   {
@@ -187,6 +187,12 @@
    "path": "game/agent/AgentSystem.gd",
    "func": "request_decision",
    "call": "string:.call( \"request_decision\", prepared_wake, on_complete, retry_feedback, )",
+   "count": 1
+  },
+  {
+   "path": "game/agent/AgentSystem.gd",
+   "func": "request_json_for_resident",
+   "call": "string:.call( \"request_json\", model_request, on_complete, )",
    "count": 1
   },
   {
@@ -966,7 +972,7 @@
   {
    "path": "game/agent/debug/AgentDebugSession.gd",
    "func": "begin_avatar_conversation",
-   "call": "string:.call( \"player_reply_conversation\", String(active.get(\"conversationId\", \"\")), say.strip_edges(), \"旅行者继续交谈\", )",
+   "call": "string:.call( \"player_reply_conversation\", String(active.get(\"conversationId\", \"\")), say.strip_edges(), \"旅行者继续交谈\", false, )",
    "count": 1
   },
   {
@@ -1026,7 +1032,7 @@
   {
    "path": "game/agent/debug/AgentDebugSession.gd",
    "func": "perform_action",
-   "call": "string:.call( \"player_reply_conversation\", String(action.get(\"conversation_id\", \"\")), String(action.get(\"say\", \"\")), \"旅行者继续交谈\", )",
+   "call": "string:.call( \"player_reply_conversation\", String(action.get(\"conversation_id\", \"\")), String(action.get(\"say\", \"\")), \"旅行者继续交谈\", false, )",
    "count": 1
   },
   {
@@ -1135,30 +1141,6 @@
    "path": "game/agent/memory/MemoryOrganizer.gd",
    "func": "validate_candidate",
    "call": "string:.call(\"validate\", candidate)",
-   "count": 1
-  },
-  {
-   "path": "game/agent/memory/ResidentFormalMemoryBuilder.gd",
-   "func": "_merge_evidence",
-   "call": "string:.call(\"apply_result\", candidate, evidence, outcome, revision)",
-   "count": 1
-  },
-  {
-   "path": "game/agent/memory/ResidentFormalMemoryBuilder.gd",
-   "func": "_merge_evidence",
-   "call": "string:.call(\"apply_result\", exact, evidence, outcome, revision)",
-   "count": 1
-  },
-  {
-   "path": "game/agent/memory/ResidentFormalMemoryBuilder.gd",
-   "func": "_merge_evidence",
-   "call": "string:.call(\"compare\", candidate, evidence, active >= 0)",
-   "count": 1
-  },
-  {
-   "path": "game/agent/memory/ResidentFormalMemoryBuilder.gd",
-   "func": "_merge_evidence",
-   "call": "string:.call(\"compare\", exact, evidence, active >= 0)",
    "count": 1
   },
   {
@@ -1319,6 +1301,36 @@
   },
   {
    "path": "game/agent/memory/ResidentMemorySystem.gd",
+   "func": "_persist_perceived_memories",
+   "call": "string:.call( \"replace\", archive_snapshot, )",
+   "count": 1
+  },
+  {
+   "path": "game/agent/memory/ResidentMemorySystem.gd",
+   "func": "_persist_perceived_memories",
+   "call": "string:.call( \"replace\", archive_validation[\"archive\"], )",
+   "count": 1
+  },
+  {
+   "path": "game/agent/memory/ResidentMemorySystem.gd",
+   "func": "_persist_perceived_memories",
+   "call": "string:.call( \"replace\", log_validation[\"log\"], )",
+   "count": 1
+  },
+  {
+   "path": "game/agent/memory/ResidentMemorySystem.gd",
+   "func": "_persist_perceived_memories",
+   "call": "string:.call( \"validate\", formal_result.get(\"archive\"), )",
+   "count": 1
+  },
+  {
+   "path": "game/agent/memory/ResidentMemorySystem.gd",
+   "func": "_persist_perceived_memories",
+   "call": "string:.call( \"validate\", formal_result.get(\"intervention_log\"), )",
+   "count": 1
+  },
+  {
+   "path": "game/agent/memory/ResidentMemorySystem.gd",
    "func": "_rollback_subjective_memory",
    "call": "string:.call(\"replace\", old_archive)",
    "count": 1
@@ -1381,6 +1393,12 @@
    "path": "game/agent/memory/ResidentMemorySystem.gd",
    "func": "_validate_persistent_state",
    "call": "string:.call(\"validate\", state.get(\"memory\"))",
+   "count": 1
+  },
+  {
+   "path": "game/agent/memory/ResidentMemorySystem.gd",
+   "func": "accept_decision",
+   "call": "string:.call(\"replace\", _memory)",
    "count": 1
   },
   {
@@ -1547,6 +1565,12 @@
   },
   {
    "path": "game/agent/memory/ResidentMemorySystem.gd",
+   "func": "find_formal_memory_by_evidence_ref",
+   "call": "string:.call(\"read\")",
+   "count": 1
+  },
+  {
+   "path": "game/agent/memory/ResidentMemorySystem.gd",
    "func": "get_debug_snapshot",
    "call": "string:.call(\"capacity\")",
    "count": 1
@@ -1699,6 +1723,12 @@
    "path": "game/ui/avatar_mode/runtime/AvatarModeHud.gd",
    "func": "_sync_live_resident_prompt_anchor",
    "call": "variable:.call(resident_id)",
+   "count": 1
+  },
+  {
+   "path": "game/ui/avatar_mode/runtime/AvatarModeHud.gd",
+   "func": "bind_town_ui_adapter",
+   "call": "string:.call( \"get_view_model\", TIME_HUD_SCOPE, )",
    "count": 1
   },
   {
@@ -2243,6 +2273,12 @@
   },
   {
    "path": "game/ui/resident_model_assignment/runtime/ResidentModelAssignmentService.gd",
+   "func": "_apply_draft",
+   "call": "variable:.call( _draft.duplicate(true), bindings.duplicate(true), )",
+   "count": 1
+  },
+  {
+   "path": "game/ui/resident_model_assignment/runtime/ResidentModelAssignmentService.gd",
    "func": "_refresh_public_catalog",
    "call": "string:.call(\"get_health_snapshot\")",
    "count": 1
@@ -2350,30 +2386,6 @@
    "count": 1
   },
   {
-   "path": "game/ui/startup/StartupScreen.gd",
-   "func": "_build_ambient_residents",
-   "call": "string:.call( \"build_loop_script\", route_nodes, definition[\"indoor\"] as Dictionary, )",
-   "count": 1
-  },
-  {
-   "path": "game/ui/startup/StartupScreen.gd",
-   "func": "_build_ambient_residents",
-   "call": "string:.call( \"configure\", loadout_id, route_steps, float(definition[\"speed\"]) / reference_scale * _rng.randf_range(0.92, 1.08), float(definition[\"scale\"]) / reference_scale * _rng.randf_range(0.96, 1.04), _rng.randi(), _rng.randf_range(0.0, 1.2), )",
-   "count": 1
-  },
-  {
-   "path": "game/ui/startup/StartupScreen.gd",
-   "func": "_build_ambient_residents",
-   "call": "string:.call(\"load_catalog\")",
-   "count": 1
-  },
-  {
-   "path": "game/ui/startup/StartupScreen.gd",
-   "func": "_physics_process",
-   "call": "string:.call(\"advance\", delta)",
-   "count": 1
-  },
-  {
    "path": "game/ui/system_feedback/SystemFeedbackLayer.gd",
    "func": "_activate_entry",
    "call": "string:.call( \"configure\", entry.get(\"viewModel\", {}), entry.get(\"surface\", \"\") )",
@@ -2401,6 +2413,12 @@
    "path": "game/ui/system_feedback/SystemFeedbackLayer.gd",
    "func": "_replace_toast_entry",
    "call": "string:.call( \"configure\", view_model, \"toast\" )",
+   "count": 1
+  },
+  {
+   "path": "game/ui/system_feedback/SystemFeedbackLayer.gd",
+   "func": "_unhandled_input",
+   "call": "string:.call(\"request_cancel\")",
    "count": 1
   },
   {
@@ -2555,8 +2573,38 @@
   },
   {
    "path": "game/world/integration/TownWorldAgentGateway.gd",
+   "func": "_activate_initial_experiment_conditions",
+   "call": "string:.call( \"request_runtime_observation_wake\", resident_id, )",
+   "count": 1
+  },
+  {
+   "path": "game/world/integration/TownWorldAgentGateway.gd",
+   "func": "_activate_initial_experiment_conditions",
+   "call": "string:.call(\"get_time\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/integration/TownWorldAgentGateway.gd",
+   "func": "_deliver_resident_death_story",
+   "call": "variable:.call({ \"ok\": false, \"errorCode\": \"DEATH_STORY_INVALID\", \"retryable\": false, \"errors\": [\"居民 Agent 没有返回完整死亡故事\"], })",
+   "count": 1
+  },
+  {
+   "path": "game/world/integration/TownWorldAgentGateway.gd",
+   "func": "_deliver_resident_death_story",
+   "call": "variable:.call({ \"ok\": true, \"story\": story, \"generatedBy\": \"resident_agent\", \"requestId\": request_id, })",
+   "count": 1
+  },
+  {
+   "path": "game/world/integration/TownWorldAgentGateway.gd",
    "func": "_deliver_resident_inner_observation",
    "call": "variable:.call( _inner_observation_ready_result( snapshot, request_id, ) )",
+   "count": 1
+  },
+  {
+   "path": "game/world/integration/TownWorldAgentGateway.gd",
+   "func": "_request_pending_runtime_observation_wakes",
+   "call": "string:.call( \"request_runtime_observation_wake\", resident_id, )",
    "count": 1
   },
   {
@@ -2575,6 +2623,24 @@
    "path": "game/world/integration/TownWorldAgentGateway.gd",
    "func": "bind_world",
    "call": "string:.call(\"is_running\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/integration/TownWorldAgentGateway.gd",
+   "func": "queue_runtime_observation",
+   "call": "string:.call( \"request_runtime_observation_wake\", String(observation.get(\"targetResidentId\", \"\")), )",
+   "count": 1
+  },
+  {
+   "path": "game/world/integration/TownWorldAgentGateway.gd",
+   "func": "queue_runtime_observation",
+   "call": "string:.call(\"get_time\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/integration/TownWorldAgentGateway.gd",
+   "func": "request_resident_death_story",
+   "call": "string:Callable(self, \"_deliver_resident_death_story\")",
    "count": 1
   },
   {
@@ -2695,6 +2761,30 @@
    "path": "game/world/presentation/animals/TownAnimalPresentation.gd",
    "func": "_update_resident_cat_interactions",
    "call": "string:.call(\"get_body\", resident_id)",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/conflict/TownConflictPresentation.gd",
+   "func": "_horizontal_direction_name_for_actor",
+   "call": "string:.call(\"get_direction_name\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/conflict/TownConflictPresentation.gd",
+   "func": "_start_resident_attack",
+   "call": "string:.call(\"face_direction\", direction)",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/conflict/TownConflictPresentation.gd",
+   "func": "_start_resident_attack",
+   "call": "string:.call(\"get_direction_name\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/conflict/TownConflictPresentation.gd",
+   "func": "_stop_resident_attack",
+   "call": "string:.call(\"set_direction\", original_direction)",
    "count": 1
   },
   {
@@ -3006,12 +3096,6 @@
   {
    "path": "game/world/presentation/game_flow/GameFlowHost.gd",
    "func": "_bind_town_runtime",
-   "call": "string:.call( \"configure\", runtime, runtime.call(\"get_world_runtime\"), _agent_save_participant(), _active_session_config, )",
-   "count": 1
-  },
-  {
-   "path": "game/world/presentation/game_flow/GameFlowHost.gd",
-   "func": "_bind_town_runtime",
    "call": "string:.call(\"bind_town_ui_adapter\", adapter)",
    "count": 2
   },
@@ -3036,6 +3120,12 @@
   {
    "path": "game/world/presentation/game_flow/GameFlowHost.gd",
    "func": "_bind_town_runtime",
+   "call": "string:.call(\"get_time\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/game_flow/GameFlowHost.gd",
+   "func": "_bind_town_runtime",
    "call": "string:.call(\"get_ui_adapter\")",
    "count": 1
   },
@@ -3043,7 +3133,7 @@
    "path": "game/world/presentation/game_flow/GameFlowHost.gd",
    "func": "_bind_town_runtime",
    "call": "string:.call(\"get_world_runtime\")",
-   "count": 2
+   "count": 3
   },
   {
    "path": "game/world/presentation/game_flow/GameFlowHost.gd",
@@ -3056,6 +3146,12 @@
    "func": "_bind_town_runtime",
    "call": "string:Callable(self, \"_on_pause_intent_requested\")",
    "count": 2
+  },
+  {
+   "path": "game/world/presentation/game_flow/GameFlowHost.gd",
+   "func": "_bind_town_runtime",
+   "call": "string:Callable(self, \"_on_town_environment_changed\")",
+   "count": 1
   },
   {
    "path": "game/world/presentation/game_flow/GameFlowHost.gd",
@@ -3366,12 +3462,6 @@
   {
    "path": "game/world/presentation/game_flow/GameFlowHost.gd",
    "func": "_on_formal_continue_provider_health_completed",
-   "call": "string:.call( \"configure\", runtime, runtime.call(\"get_world_runtime\"), _agent_save_participant(), restored_session_config, )",
-   "count": 1
-  },
-  {
-   "path": "game/world/presentation/game_flow/GameFlowHost.gd",
-   "func": "_on_formal_continue_provider_health_completed",
    "call": "string:.call( \"configure_agent_gateway\", _gateway, )",
    "count": 1
   },
@@ -3445,6 +3535,12 @@
    "path": "game/world/presentation/game_flow/GameFlowHost.gd",
    "func": "_on_startup_provider_view_model_changed",
    "call": "string:.call( \"apply_view_models\", models.get(\"session\", {}) as Dictionary, models.get(\"save\", {}) as Dictionary, )",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/game_flow/GameFlowHost.gd",
+   "func": "_on_town_environment_changed",
+   "call": "string:.call(\"create_save\", { \"reason\": DAILY_AUTO_SAVE_REASON, })",
    "count": 1
   },
   {
@@ -3744,12 +3840,6 @@
   {
    "path": "game/world/presentation/game_flow/GameFlowHost.gd",
    "func": "_start_formal_continue",
-   "call": "string:.call( \"request_health_check\", bindings.duplicate(true), Callable(self, \"_on_formal_continue_provider_health_completed\").bind( generation, discovery.duplicate(true), world_data.duplicate(true), identities.duplicate(true), bindings.duplicate(true), resident_names.duplicate(), ), )",
-   "count": 1
-  },
-  {
-   "path": "game/world/presentation/game_flow/GameFlowHost.gd",
-   "func": "_start_formal_continue",
    "call": "string:.call( \"runtime_configuration\" )",
    "count": 1
   },
@@ -4002,7 +4092,7 @@
   {
    "path": "game/world/presentation/session/TownSessionBootstrap.gd",
    "func": "_on_entry_availability",
-   "call": "string:.call( \"configure_session\", { \"sessionId\": session_id, \"slotId\": slot_id, \"saveRevision\": 0, \"residentIdentities\": _resident_identities(bindings), \"residentBindings\": bindings.duplicate(true), \"capabilityMode\": capability_mode, \"formalReady\": formal_ready, \"internalPlaytest\": internal_playtest, \"internalLivePlaytest\": internal_live_playtest, }, provider_service, options.get(\"requestHost\") as Node, )",
+   "call": "string:.call( \"configure_session\", { \"sessionId\": session_id, \"slotId\": slot_id, \"saveRevision\": 0, \"residentIdentities\": _resident_identities(bindings), \"residentBindings\": bindings.duplicate(true), \"capabilityMode\": capability_mode, \"formalReady\": formal_ready, \"internalPlaytest\": internal_playtest, \"internalLivePlaytest\": internal_live_playtest, \"experimentScenario\": ( (options.get(\"experimentScenario\", {}) as Dictionary).duplicate(true) if options.get(\"experimentScenario\") is Dictionary else options.get(\"experimentScenario\") ), }, provider_service, options.get(\"requestHost\") as Node, )",
    "count": 1
   },
   {
@@ -4034,6 +4124,12 @@
    "func": "_restore_selected",
    "call": "string:.call(\"cancel_restore\")",
    "count": 13
+  },
+  {
+   "path": "game/world/presentation/session/TownSessionUiService.gd",
+   "func": "_capture_experiment_state",
+   "call": "string:.call(\"capture_experiment_state\")",
+   "count": 1
   },
   {
    "path": "game/world/presentation/session/TownSessionUiService.gd",
@@ -4126,6 +4222,24 @@
    "count": 1
   },
   {
+   "path": "game/world/presentation/town_runtime/BuildingResidentMarker.gd",
+   "func": "_on_hit_area_input",
+   "call": "string:.call(\"activate_from_overlapping_marker\", viewport, event)",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/town_runtime/TownRuntime.gd",
+   "func": "_on_building_pressed",
+   "call": "string:.call(\"dismiss_resident_action_menu\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/town_runtime/TownRuntime.gd",
+   "func": "_on_building_pressed",
+   "call": "string:.call(\"display_size\")",
+   "count": 1
+  },
+  {
    "path": "game/world/presentation/town_runtime/TownRuntime.gd",
    "func": "_start_world",
    "call": "string:Callable( _resident_presentation, \"get_display_head_screen_anchor\", )",
@@ -4142,6 +4256,12 @@
    "func": "_start_world",
    "call": "variable:.call( start_method, world_data, opening_result.get(\"config\", {}) as Dictionary, _world_resident_identity_input(), )",
    "count": 1
+  },
+  {
+   "path": "game/world/presentation/town_runtime/TownRuntime.gd",
+   "func": "_update_building_resident_marker_zoom",
+   "call": "string:.call(\"set_camera_zoom\", _camera.zoom)",
+   "count": 2
   },
   {
    "path": "game/world/presentation/town_runtime/TownRuntime.gd",
@@ -4421,12 +4541,6 @@
   },
   {
    "path": "game/world/presentation/ui/TownUiAdapter.gd",
-   "func": "_capture_current_hud_far_conversations",
-   "call": "string:Callable(self, \"_spectator_conversation_before\")",
-   "count": 1
-  },
-  {
-   "path": "game/world/presentation/ui/TownUiAdapter.gd",
    "func": "_connected_resident_names",
    "call": "string:.call(\"get_connected_resident_names\")",
    "count": 1
@@ -4607,8 +4721,20 @@
   },
   {
    "path": "game/world/presentation/ui/TownUiAdapter.gd",
+   "func": "_expire_conversation_wait_if_needed",
+   "call": "string:.call( \"player_end_conversation\", conversation_id, \"话题自然停了下来\", )",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiAdapter.gd",
    "func": "_gateway_errors",
    "call": "string:.call(\"get_errors\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiAdapter.gd",
+   "func": "_hud_far_conversation_participants_visible",
+   "call": "variable:.call(resident_name)",
    "count": 1
   },
   {
@@ -4717,6 +4843,18 @@
    "path": "game/world/presentation/ui/TownUiAdapter.gd",
    "func": "discard_conversation_photo",
    "call": "string:.call( \"discard_staged_conversation_photo\", resident_id.strip_edges(), ref.strip_edges(), )",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiAdapter.gd",
+   "func": "dismiss_resident_action_menu",
+   "call": "string:.call(\"current_route\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiAdapter.gd",
+   "func": "dismiss_resident_action_menu",
+   "call": "string:.call(\"request_back\")",
    "count": 1
   },
   {
@@ -4842,6 +4980,12 @@
   {
    "path": "game/world/presentation/ui/TownUiPageProjectionService.gd",
    "func": "_connect_world_signals",
+   "call": "string:Callable(self, \"_on_world_log_changed\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiPageProjectionService.gd",
+   "func": "_connect_world_signals",
    "call": "string:Callable(self, \"_on_world_restored\")",
    "count": 1
   },
@@ -4902,6 +5046,12 @@
   {
    "path": "game/world/presentation/ui/TownUiPageProjectionService.gd",
    "func": "_disconnect_world_signals",
+   "call": "string:Callable(self, \"_on_world_log_changed\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiPageProjectionService.gd",
+   "func": "_disconnect_world_signals",
    "call": "string:Callable(self, \"_on_world_restored\")",
    "count": 1
   },
@@ -4932,13 +5082,31 @@
   {
    "path": "game/world/presentation/ui/TownUiPageProjectionService.gd",
    "func": "_dispatch_resident_action",
+   "call": "string:.call( \"request_resident_death_story\", resident_id, request_id, Callable(self, \"_on_resident_death_story_result\").bind( resident_id, request_id, ), )",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiPageProjectionService.gd",
+   "func": "_dispatch_resident_action",
    "call": "string:.call(\"follow_resident\", resident_name)",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiPageProjectionService.gd",
+   "func": "_dispatch_resident_action",
+   "call": "string:Callable(self, \"_on_resident_death_story_result\")",
    "count": 1
   },
   {
    "path": "game/world/presentation/ui/TownUiPageProjectionService.gd",
    "func": "_dispatch_resident_detail",
    "call": "string:.call( \"apply_resident_memory_intervention\", resident_id, { \"memoryKey\": String(payload.get(\"memoryKey\", \"\")), \"operation\": String(payload.get(\"operation\", \"\")), \"playerText\": String(payload.get(\"playerText\", \"\")), \"expectedRevision\": int(payload.get(\"expectedRevision\", -1)), }, )",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiPageProjectionService.gd",
+   "func": "_dispatch_resident_detail",
+   "call": "string:.call( \"queue_runtime_observation\", observation_request, )",
    "count": 1
   },
   {
@@ -5226,6 +5394,12 @@
   {
    "path": "game/world/presentation/ui/TownUiRuntimeHost.gd",
    "func": "_update_persistent_world_ui_visibility",
+   "call": "string:.call( \"set_presentation_mode\", \"observer\" if _observer_mode_active else \"avatar\", )",
+   "count": 1
+  },
+  {
+   "path": "game/world/presentation/ui/TownUiRuntimeHost.gd",
+   "func": "_update_persistent_world_ui_visibility",
    "call": "string:.call(\"set_indoor_focus_active\", _observer_indoor_active)",
    "count": 1
   },
@@ -5314,9 +5488,27 @@
    "count": 1
   },
   {
+   "path": "game/world/runtime/TownWorldRuntime.gd",
+   "func": "_reconcile_activity_routines_before_save",
+   "call": "string:Callable(self , \"_append_action_result_without_schedule\")",
+   "count": 1
+  },
+  {
+   "path": "game/world/runtime/activity/TownWorldActivityRuntime.gd",
+   "func": "reconcile_activity_routines_before_save",
+   "call": "variable:.call( resident_id, source_action_id, \"interrupted\", \"活动安排已经结束，居民继续当前的事情\", )",
+   "count": 1
+  },
+  {
    "path": "game/world/runtime/conflict/TownConflictAgentWorldBridge.gd",
    "func": "_project_conflicts",
    "call": "variable:.call(String(value_id))",
+   "count": 1
+  },
+  {
+   "path": "game/world/runtime/conflict/TownConflictAgentWorldBridge.gd",
+   "func": "_project_injuries",
+   "call": "variable:.call(source_actor_id)",
    "count": 1
   },
   {

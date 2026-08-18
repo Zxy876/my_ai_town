@@ -105,6 +105,8 @@ const ACTION_PROJECTION_MODULE := preload(
 const RUNTIME_LOG_TEXT := preload("res://world/runtime/log/TownRuntimeLogText.gd")
 const ACTION_SUPPORT := preload("res://world/runtime/action/TownActionSupport.gd")
 const OCCUPATION_SERVICE_PRESENCE_REQUIRED_KINDS := ACTION_SUPPORT.OCCUPATION_SERVICE_PRESENCE_REQUIRED_KINDS
+const ONSITE_WAIT_SOFT_RECONSIDER_MINUTES := 15
+const ONSITE_WAIT_STAFF_AHEAD_THRESHOLD_FOR_RECONSIDER := 6
 const ACTIVITY_SCALARS := preload("res://world/runtime/activity/TownActivityScalars.gd")
 const SOCIAL_JUDGMENTS := preload("res://world/runtime/social/TownSocialJudgments.gd")
 const BULLETIN_PUBLISH_ACTIVITY_ID := SOCIAL_JUDGMENTS.BULLETIN_PUBLISH_ACTIVITY_ID
@@ -481,7 +483,7 @@ func validate_startup(
 			result["errorCode"] = String(identities.get("errorCode", "WORLD_RESIDENT_IDENTITIES_INVALID"))
 			result["retryable"] = false
 			result["errors"] = (identities.get("errors", []) as Array).duplicate()
-			result["issues"] = [{
+			result["issues"] = [ {
 				"code": String(result["errorCode"]),
 				"scope": "opening.residentIdentities",
 				"subject": "residentIdentities",
@@ -515,7 +517,7 @@ func validate_new_game_resident_spawns(
 		"errorCode": "WORLD_RESIDENT_SPAWN_INVALID",
 		"retryable": false,
 		"errors": Array(errors),
-		"issues": [{
+		"issues": [ {
 			"code": "WORLD_RESIDENT_SPAWN_INVALID",
 			"scope": "opening.residents.worldState",
 			"subject": "residentSpawn",
@@ -673,7 +675,7 @@ func _start_with_validation(
 	var prepared_resident_sleep: TownResidentSleepRuntime = RESIDENT_SLEEP_RUNTIME.new()
 	var prepared_conflict_controller: TownConflictWorldController = CONFLICT_CONTROLLER.new()
 	var prepared_resident_lifecycle: TownResidentLifecycleRuntime = RESIDENT_LIFECYCLE_RUNTIME.new()
-	var conflict_configuration := prepared_conflict_controller.configure(self,) as Dictionary
+	var conflict_configuration := prepared_conflict_controller.configure(self , ) as Dictionary
 	if conflict_configuration.get("ok") != true:
 		return _decorate_command_result(conflict_configuration)
 	_running = false
@@ -696,7 +698,7 @@ func _start_with_validation(
 	_base_world_data = world_data.duplicate(true)
 	_place_by_name_cache.clear()
 	_presentation_cue_cache.clear()
-	PERCEPTION_RUNTIME._rebuild_membership_grid_lookup(self)
+	PERCEPTION_RUNTIME._rebuild_membership_grid_lookup(self )
 	_indoor_layout_overrides.clear()
 	_dynamic_props.clear()
 	_animal_facts.clear()
@@ -757,20 +759,20 @@ func _start_with_validation(
 				"scheduledAbsoluteMinute": int(
 					prepared_arrival_schedule.get(resident_id, -1),
 				),
-				"arrivedAbsoluteMinute": -1,
+				"arrivedAbsoluteMinute": - 1,
 			}
 			resident_runtime["doing"] = "尚未抵达小镇"
 		var lifecycle_initialization := prepared_resident_lifecycle.initialize_resident(resident_id,
 			name,
-			_resident_home_anchor(world_data, resident_runtime),) as Dictionary
+			_resident_home_anchor(world_data, resident_runtime), ) as Dictionary
 		if lifecycle_initialization.get("ok") != true:
 			return _decorate_command_result(lifecycle_initialization)
 		_residents[resident_id] = resident_runtime
 		var condition_initialization := _resident_conditions.initialize_resident(resident_id,
-			RESTORE_PEOPLE.resident_condition_seed(resident_id),) as Dictionary
+			RESTORE_PEOPLE.resident_condition_seed(resident_id), ) as Dictionary
 		if condition_initialization.get("ok") != true:
 			return _decorate_command_result(condition_initialization)
-		var sleep_initialization := _resident_sleep.initialize_resident(resident_id,) as Dictionary
+		var sleep_initialization := _resident_sleep.initialize_resident(resident_id, ) as Dictionary
 		if sleep_initialization.get("ok") != true:
 			return _decorate_command_result(sleep_initialization)
 	_resident_order.sort()
@@ -789,15 +791,15 @@ func _start_with_validation(
 	# 待抵达居民的入口落点和回家可达性属于加载期静态准备，不能等到
 	# 某个游戏分钟到来时在正式帧里同步跑完整寻路。
 	RESIDENT_ARRIVAL_RUNTIME.prewarm_pending_entry_states(
-		self,
+		self ,
 		IDLE_RESIDENT_CLEARANCE_PX,
 	)
 	var conflict_bridge_configuration := _conflict_agent_world_bridge.configure(_conflict_controller,
-		_person_name_for_id,) as Dictionary
+		_person_name_for_id, ) as Dictionary
 	if conflict_bridge_configuration.get("ok") != true:
 		return _decorate_command_result(conflict_bridge_configuration)
 	_connect_conflict_controller_signals()
-	PERCEPTION_RUNTIME._refresh_perception(self, false)
+	PERCEPTION_RUNTIME._refresh_perception(self , false)
 	_bump_world_revision(false)
 	_begin_world_run()
 	_sync_production_tasks(
@@ -1298,7 +1300,7 @@ func _prepare_snapshot_state_for_restore(
 			).duplicate(true),
 		}
 	return RESTORE_STATE.prepare_full(
-		self,
+		self ,
 		world_data,
 		opening_config,
 		decoded.get("value", {}) as Dictionary,
@@ -1747,7 +1749,7 @@ func _advance_resident_arrivals(absolute_minute: int) -> void:
 		arrival["status"] = "arrived"
 		arrival["arrivedAbsoluteMinute"] = absolute_minute
 		resident["arrivalState"] = arrival
-		RESIDENT_ARRIVAL_RUNTIME.activate_entry_continuity(self, resident_id, resident, absolute_minute)
+		RESIDENT_ARRIVAL_RUNTIME.activate_entry_continuity(self , resident_id, resident, absolute_minute)
 		resident["movementRevision"] = (
 			int(resident.get("movementRevision", 1)) + 1
 		)
@@ -1774,7 +1776,7 @@ func _advance_resident_arrivals(absolute_minute: int) -> void:
 	_sync_production_tasks(absolute_minute)
 func _arrival_entry_state_for(resident_id: String) -> Dictionary:
 	return RESIDENT_ARRIVAL_RUNTIME.entry_state_for(
-		self,
+		self ,
 		resident_id,
 		IDLE_RESIDENT_CLEARANCE_PX,
 	)
@@ -1810,7 +1812,7 @@ func advance(real_seconds: float) -> Dictionary:
 			"minutesAdvanced": 0,
 			"events": [],
 		})
-	CONVERSATION_RUNTIME._advance_autonomous_conversation_timeouts(self, real_seconds)
+	CONVERSATION_RUNTIME._advance_autonomous_conversation_timeouts(self , real_seconds)
 	var environment_update := _environment.advance(
 		real_seconds * float(_simulation_speed),
 	) as Dictionary
@@ -1857,7 +1859,7 @@ func advance(real_seconds: float) -> Dictionary:
 			lap_usec = _advance_profile_lap(advance_profile, "staffingMattersUsec", lap_usec)
 			_sync_production_tasks(absolute_minute)
 			lap_usec = _advance_profile_lap(advance_profile, "productionTasksUsec", lap_usec)
-		PERCEPTION_RUNTIME._refresh_perception(self, true)
+		PERCEPTION_RUNTIME._refresh_perception(self , true)
 		lap_usec = _advance_profile_lap(advance_profile, "perceptionUsec", lap_usec)
 		_schedule_life_rhythm_decisions(absolute_minute)
 		lap_usec = _advance_profile_lap(advance_profile, "lifeRhythmUsec", lap_usec)
@@ -1926,7 +1928,7 @@ func cycle_time_period_for_test() -> Dictionary:
 		_advance_resident_conditions(absolute_minute)
 		_advance_social_matters(absolute_minute)
 		_advance_passive_activity_needs(absolute_minute)
-		PERCEPTION_RUNTIME._refresh_perception(self, true)
+		PERCEPTION_RUNTIME._refresh_perception(self , true)
 		_schedule_life_rhythm_decisions(absolute_minute)
 	if result.get("ok") == true:
 		_notify_world_revision()
@@ -1964,8 +1966,8 @@ func _resident_save_snapshot(resident_id: String) -> Dictionary:
 				"arrivalState",
 				{
 					"status": "arrived",
-					"scheduledAbsoluteMinute": -1,
-					"arrivedAbsoluteMinute": -1,
+					"scheduledAbsoluteMinute": - 1,
+					"arrivedAbsoluteMinute": - 1,
 				},
 			) as Dictionary
 		).duplicate(true),
@@ -2029,7 +2031,7 @@ func _reconcile_activity_routines_before_save() -> void:
 	_activity_runtime.reconcile_activity_routines_before_save(
 		_activity_routines,
 		_residents,
-		Callable(self, "_append_action_result_without_schedule"),
+		Callable(self , "_append_action_result_without_schedule"),
 		ACTION_PROJECTION_MODULE.ACTIVITY_SOURCE_DIRECT,
 	)
 func _activity_routine_save_snapshot() -> Dictionary:
@@ -2331,7 +2333,7 @@ func _apply_prepared_restore_candidate(
 	_base_world_data = world_data.duplicate(true)
 	_place_by_name_cache.clear()
 	_presentation_cue_cache.clear()
-	PERCEPTION_RUNTIME._rebuild_membership_grid_lookup(self)
+	PERCEPTION_RUNTIME._rebuild_membership_grid_lookup(self )
 	_indoor_layout_overrides.clear()
 	_dynamic_props.clear()
 	_animal_facts = (
@@ -2361,8 +2363,8 @@ func _apply_prepared_restore_candidate(
 					),
 				),
 			),
-			_resident_home_anchor(world_data, resident),)
-	restored_resident_lifecycle.restore_save_snapshot(prepared.get("residentLifecyclePrepared", {}) as Dictionary,)
+			_resident_home_anchor(world_data, resident), )
+	restored_resident_lifecycle.restore_save_snapshot(prepared.get("residentLifecyclePrepared", {}) as Dictionary, )
 	_resident_lifecycle = restored_resident_lifecycle
 	_staffing = STAFFING_RUNTIME.new()
 	_staffing.configure(_world_data)
@@ -2434,7 +2436,7 @@ func _apply_prepared_restore_candidate(
 		var conversation := _conversations[conversation_id] as Dictionary
 		if (
 			String(conversation.get("status", "")) == "active"
-			and CONVERSATION_RUNTIME._is_resident_only_conversation(self, conversation)
+			and CONVERSATION_RUNTIME._is_resident_only_conversation(self , conversation)
 		):
 			_autonomous_conversation_idle_seconds[conversation_id] = 0.0
 	_trim_announcement_history()
@@ -2450,14 +2452,14 @@ func _apply_prepared_restore_candidate(
 	_world_log_consistency_error = ""
 	_world_log_capture_enabled = false
 	_rebuild_story_contexts_from_public_log()
-	CONVERSATION_RUNTIME._trim_ended_conversation_history(self)
+	CONVERSATION_RUNTIME._trim_ended_conversation_history(self )
 	_environment = prepared.get("environment") as WORLD_ENVIRONMENT
 	_disconnect_conflict_controller_signals()
 	_conflict_controller = (
 		prepared.get("conflictControllerPrepared") as TownConflictWorldController
 	)
 	var conflict_bridge_configuration := _conflict_agent_world_bridge.configure(_conflict_controller,
-		_person_name_for_id,) as Dictionary
+		_person_name_for_id, ) as Dictionary
 	if conflict_bridge_configuration.get("ok") != true:
 		return _command_failure(
 			String(
@@ -2475,7 +2477,7 @@ func _apply_prepared_restore_candidate(
 	_conversation_sequence = int(sequences.get("conversation", 0))
 	_world_revision = maxi(_world_revision, int(sequences.get("worldRevision", 0)))
 	_bump_world_revision(false)
-	PERCEPTION_RUNTIME._refresh_perception(self, false)
+	PERCEPTION_RUNTIME._refresh_perception(self , false)
 	_begin_world_run()
 	for resident_name in _resident_order:
 		var resident := _residents[resident_name] as Dictionary
@@ -2517,8 +2519,6 @@ func _apply_prepared_restore_candidate(
 	conflict_projection_changed.emit(get_public_conflict_projection())
 	world_restored.emit(summary.duplicate(true))
 	return summary
-
-
 
 
 func get_time() -> Dictionary:
@@ -2621,7 +2621,7 @@ func create_private_message(
 				else "resident_message"
 			),
 			"sourceRef": message_id,
-			"targets": [{
+			"targets": [ {
 				"kind": "resident",
 				"ref": recipient_id,
 			}],
@@ -2660,7 +2660,7 @@ func create_private_message(
 		"content": normalized_content,
 		"state": "pending",
 		"createdAtMinute": created_at,
-		"deliveredAtMinute": -1,
+		"deliveredAtMinute": - 1,
 		"deliveredByResidentId": "",
 		"taskId": task_id,
 		"batchId": batch_id,
@@ -2841,7 +2841,7 @@ func get_work_tasks_for_resident(
 				task.get("processStage", "ready"),
 			),
 		}
-		var cargo_lot := _cargo_inventory.cargo_lot(String(task.get("sourceRef", "")),) as Dictionary
+		var cargo_lot := _cargo_inventory.cargo_lot(String(task.get("sourceRef", "")), ) as Dictionary
 		if (
 			String(task.get("capability", "")) == "cargo.deliver"
 			and not cargo_lot.is_empty()
@@ -2954,7 +2954,7 @@ func get_work_tasks_for_resident(
 			if not medical_interview.is_empty():
 				projected_service_request["medical_dialogue"] = (
 					_clinic_interviews.projection_for_role(medical_interview,
-						"clinician",) as Dictionary
+						"clinician", ) as Dictionary
 				).duplicate(true)
 			projected_task["service_request"] = projected_service_request
 			projected_task["next_step"] = {
@@ -3199,7 +3199,7 @@ func create_occupation_service_request(spec: Dictionary) -> Dictionary:
 			request_id,
 		) as Dictionary
 	else:
-		var targets: Array = [{
+		var targets: Array = [ {
 			"kind": String(definition.get("targetKind", "")),
 			"ref": (
 				String(definition.get("targetRef", ""))
@@ -3499,7 +3499,7 @@ func _reuse_existing_dining_order(
 		"changed": false,
 		"request": existing_meal_order.duplicate(true),
 		"task": (
-			_work_tasks.task(String(existing_meal_order.get("taskId", "")),) as Dictionary
+			_work_tasks.task(String(existing_meal_order.get("taskId", "")), ) as Dictionary
 		).duplicate(true),
 	})
 
@@ -3525,7 +3525,7 @@ func _hold_dining_order_until_meal_service(
 		request_id,
 		wait_reason,
 	) as Dictionary
-	var meal_preparation_task := _work_tasks.task("meal-preparation:%s" % _meal_period_source_ref(now),) as Dictionary
+	var meal_preparation_task := _work_tasks.task("meal-preparation:%s" % _meal_period_source_ref(now), ) as Dictionary
 	meal_preparation_task = _reserve_work_task(
 		meal_preparation_task,
 		"occupation_dining_operator",
@@ -3582,7 +3582,7 @@ func _configure_created_request_task_for_kind(
 		var medical_context := _clinic_interviews.create_context(request_id,
 			requester_id,
 			(request_context.get("conditionIds", []) as Array).duplicate(),
-			subject_ref,) as Dictionary
+			subject_ref, ) as Dictionary
 		if medical_context.is_empty():
 			_occupation_services.cancel_request(
 				request_id,
@@ -3837,7 +3837,7 @@ func _reserve_work_task(
 		if not _resident_can_accept_work_task(resident_id, task):
 			continue
 		var active_task_count := 0
-		for active_value: Variant in _work_tasks.tasks_for_resident(resident_id,) as Array:
+		for active_value: Variant in _work_tasks.tasks_for_resident(resident_id, ) as Array:
 			var active_task := active_value as Dictionary
 			if String(active_task.get("state", "")) in [
 				"accepted",
@@ -3867,7 +3867,7 @@ func _reserve_work_task(
 	var accepted := _work_tasks.accept_task(String(task.get("taskId", "")),
 		selected_resident_id,
 		occupation_id,
-		int(task.get("revision", 0)),) as Dictionary
+		int(task.get("revision", 0)), ) as Dictionary
 	if accepted.get("ok") != true:
 		return task.duplicate(true)
 	_schedule_decision(
@@ -4212,13 +4212,13 @@ func _create_plant_research_stage_task(
 			)
 		"verify":
 			capability = "research.verify"
-			targets = [{
+			targets = [ {
 				"kind": "prop",
 				"ref": "图书馆西侧高书架",
 			}]
 		"record":
 			capability = "research.record"
-			targets = [{
+			targets = [ {
 				"kind": "prop",
 				"ref": "图书馆写作桌",
 			}]
@@ -4418,7 +4418,7 @@ func _sync_market_preparation_tasks(absolute_minute: int) -> void:
 		"capability": "retail.arrange",
 		"sourceKind": "display_change",
 		"sourceRef": "flower-stall-bouquet-stock",
-		"targets": [{
+		"targets": [ {
 			"kind": "prop",
 			"ref": "独立市集北侧花摊",
 		}],
@@ -4600,7 +4600,7 @@ func _sync_music_work_tasks(absolute_minute: int) -> void:
 		)
 	):
 		var musician_id := WORK_ACTOR_SELECTION_POLICY.choose_qualified_actor(
-			self,
+			self ,
 			"occupation_musician",
 			"public-event-day:%d" % day_index,
 		)
@@ -5029,7 +5029,7 @@ func get_resident_lifecycle_state(resident_ref: String) -> Dictionary:
 	if resident_id.is_empty():
 		return {}
 	return (
-		_resident_lifecycle.get_resident_state(resident_id,) as Dictionary
+		_resident_lifecycle.get_resident_state(resident_id, ) as Dictionary
 	).duplicate(true)
 
 
@@ -5116,9 +5116,9 @@ func confirm_resident_death(
 		previous_place,
 		event,
 	)
-	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_id)
+	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_id)
 	if not conversation.is_empty():
-		CONVERSATION_RUNTIME._end_conversation(self, 
+		CONVERSATION_RUNTIME._end_conversation(self ,
 			String(conversation.get("conversationId", "")),
 			"无法继续",
 			"interrupted",
@@ -5132,7 +5132,7 @@ func confirm_resident_death(
 	_release_resident_conflicts_for_death(resident_id)
 	_cancel_private_messages_for_resident_death(resident_id)
 	_work_tasks.release_tasks_for_resident(resident_id,
-		"原负责人已经死亡，任务等待重新接取",)
+		"原负责人已经死亡，任务等待重新接取", )
 	resident["doing"] = "已经死亡"
 	resident["movementRevision"] = int(
 		resident.get("movementRevision", 1),
@@ -5152,7 +5152,7 @@ func confirm_resident_death(
 	resident["pendingWake"] = {}
 	resident["wakeDispatchQueued"] = false
 	_staffing.rebuild(_living_residents_for_staffing(),
-		int(_environment.get_absolute_minute()),)
+		int(_environment.get_absolute_minute()), )
 	_refresh_place_service_staffing()
 	# 死亡是 World 已确认的全局事实。统一走公告栏的全体广播链，
 	# 居民收到的是标准“公告发布”事件，不再额外交付一套 Agent 无法
@@ -5204,7 +5204,7 @@ func _release_resident_social_participation_for_death(
 	resident_id: String,
 ) -> void:
 	var absolute_minute := int(_environment.get_absolute_minute())
-	for matter_value: Variant in _social_matters.list_matters(false,) as Array:
+	for matter_value: Variant in _social_matters.list_matters(false, ) as Array:
 		var matter := matter_value as Dictionary
 		if String(matter.get("state", "")) not in ["assigned", "executing"]:
 			continue
@@ -5222,7 +5222,7 @@ func _release_resident_social_participation_for_death(
 		var released := _social_matters.release_participant(String(matter.get("matter_id", "")),
 			resident_id,
 			"居民已经死亡",
-			absolute_minute,) as Dictionary
+			absolute_minute, ) as Dictionary
 		if released.get("ok") == true:
 			_emit_social_matter_summary(
 				String(matter.get("matter_id", "")),
@@ -5245,7 +5245,7 @@ func _release_resident_conflicts_for_death(resident_id: String) -> void:
 			continue
 		_conflict_controller.leave_conflict(String(conflict.get("conflictId", "")),
 			resident_id,
-			"death",)
+			"death", )
 
 
 func _cancel_private_messages_for_resident_death(
@@ -5274,7 +5274,7 @@ func get_resident_action_phase(resident_ref: String) -> Dictionary:
 	var resident_id := _resident_key(resident_ref)
 	if resident_id.is_empty():
 		return {}
-	return ACTION_PRESENTATION._resident_action_phase_projection(self, _residents[resident_id] as Dictionary)
+	return ACTION_PRESENTATION._resident_action_phase_projection(self , _residents[resident_id] as Dictionary)
 
 
 func get_resident_public_relationship_progress(
@@ -6194,7 +6194,7 @@ func get_resident_movement_snapshot(resident_ref: String) -> Dictionary:
 	if resident_id.is_empty():
 		return {}
 	var resident := _residents[resident_id] as Dictionary
-	if CONVERSATION_RUNTIME._resident_has_suspended_conversation(self, resident):
+	if CONVERSATION_RUNTIME._resident_has_suspended_conversation(self , resident):
 		var held_position := (
 			resident.get("position", Vector2.ZERO) as Vector2
 		)
@@ -6402,7 +6402,7 @@ func get_town_hud_resident_states() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for resident_id in _resident_order:
 		result.append(RESIDENT_STATE_PROJECTION.project_hud(
-			self,
+			self ,
 			_residents[resident_id] as Dictionary,
 		))
 	return result
@@ -6734,9 +6734,9 @@ func upsert_dynamic_prop(
 			"ok": false,
 			"errorCode": "WORLD_NOT_RUNNING",
 		}
-	var membership := PERCEPTION_RUNTIME._membership(self, "town_outdoor", position)
+	var membership := PERCEPTION_RUNTIME._membership(self , "town_outdoor", position)
 	if membership.is_empty():
-		membership = PERCEPTION_RUNTIME._nearest_outdoor_membership(self, position)
+		membership = PERCEPTION_RUNTIME._nearest_outdoor_membership(self , position)
 		if membership.is_empty():
 			_dynamic_props.erase(normalized_id)
 			return {
@@ -6746,13 +6746,13 @@ func upsert_dynamic_prop(
 				"position": {"x": position.x, "y": position.y},
 			}
 	var approach_position := position + Vector2(0.0, 72.0)
-	var approach_membership := PERCEPTION_RUNTIME._membership(self, 
+	var approach_membership := PERCEPTION_RUNTIME._membership(self ,
 		"town_outdoor",
 		approach_position,
 	)
 	if approach_membership.is_empty():
 		approach_position = position + Vector2(72.0, 0.0)
-		approach_membership = PERCEPTION_RUNTIME._membership(self, 
+		approach_membership = PERCEPTION_RUNTIME._membership(self ,
 			"town_outdoor",
 			approach_position,
 		)
@@ -6857,9 +6857,9 @@ func upsert_animal_presence(state: Dictionary) -> Dictionary:
 		})
 	var place_id := String(previous.get("place_id", ""))
 	if exists:
-		var membership := PERCEPTION_RUNTIME._membership(self, "town_outdoor", position)
+		var membership := PERCEPTION_RUNTIME._membership(self , "town_outdoor", position)
 		if membership.is_empty():
-			membership = PERCEPTION_RUNTIME._nearest_outdoor_membership(self, position)
+			membership = PERCEPTION_RUNTIME._nearest_outdoor_membership(self , position)
 		if membership.is_empty():
 			return _command_failure(
 				"ANIMAL_FACT_OUTSIDE_WORLD",
@@ -7169,8 +7169,8 @@ func _build_default_place_service_states(
 			"request_activity_ids": request_activity_ids,
 			"pending_request_ids": [],
 			"source_revision": 0,
-			"expires_at": -1,
-			"updated_at": -1,
+			"expires_at": - 1,
+			"updated_at": - 1,
 		}
 	return result
 
@@ -7402,7 +7402,7 @@ func _sync_place_service_work_task(
 			"capability": String(binding.get("capability", "")),
 			"sourceKind": source_kind,
 			"sourceRef": request_id,
-			"targets": [{
+			"targets": [ {
 				"kind": "service_request",
 				"ref": request_id,
 			}],
@@ -7996,7 +7996,7 @@ func _ensure_facility_cleanup_task(
 		),
 		"sourceKind": source_kind,
 		"sourceRef": source_ref,
-		"targets": [{
+		"targets": [ {
 			"kind": "prop",
 			"ref": (
 				"公共食堂水槽"
@@ -8111,7 +8111,7 @@ func submit_conflict_tension_action(intent: Dictionary) -> Dictionary:
 				["争执参与者当前不在场"],
 			)
 	var before_revision := _conflict_runtime_revision()
-	var result := _conflict_controller.apply_tension_action(intent,) as Dictionary
+	var result := _conflict_controller.apply_tension_action(intent, ) as Dictionary
 	return _complete_conflict_command(result, before_revision)
 
 
@@ -8124,7 +8124,7 @@ func submit_avatar_area_attack(intent: Dictionary) -> Dictionary:
 			["化身当前不在小镇中"],
 		)
 	var before_revision := _conflict_runtime_revision()
-	var result := _conflict_controller.begin_avatar_area_attack(intent,) as Dictionary
+	var result := _conflict_controller.begin_avatar_area_attack(intent, ) as Dictionary
 	return _complete_conflict_command(result, before_revision)
 
 
@@ -8138,7 +8138,7 @@ func submit_conflict_response(
 	var before_revision := _conflict_runtime_revision()
 	var result := _conflict_controller.respond(conflict_id,
 		actor_id,
-		response_kind,) as Dictionary
+		response_kind, ) as Dictionary
 	return _complete_conflict_command(result, before_revision)
 
 
@@ -8152,7 +8152,7 @@ func leave_conflict(
 	var before_revision := _conflict_runtime_revision()
 	var result := _conflict_controller.leave_conflict(conflict_id,
 		actor_id,
-		reason,) as Dictionary
+		reason, ) as Dictionary
 	return _complete_conflict_command(result, before_revision)
 
 
@@ -8168,7 +8168,7 @@ func set_player_avatar_present(
 		})
 	_player_avatar_present = present
 	_bump_world_revision(false)
-	PERCEPTION_RUNTIME._refresh_perception(self, emit_events)
+	PERCEPTION_RUNTIME._refresh_perception(self , emit_events)
 	var state := get_player_avatar_state()
 	player_avatar_state_changed.emit(state)
 	_notify_world_revision()
@@ -8187,7 +8187,7 @@ func submit_player_avatar_position(space_id: String, position: Vector2, doing :=
 	var current_space_id := String(_player_avatar.get("spaceId", ""))
 	if space_id != current_space_id:
 		return _player_command_result("更新位置", false, "跨地图空间必须通过地点切换命令")
-	var membership := PERCEPTION_RUNTIME._membership(self, space_id, position)
+	var membership := PERCEPTION_RUNTIME._membership(self , space_id, position)
 	if membership.is_empty():
 		return _player_command_result("更新位置", false, "化身位置不是合法世界位置")
 	return _apply_player_avatar_state(space_id, membership, position, String(doing), "更新位置")
@@ -8245,7 +8245,7 @@ func change_player_avatar_place(target_place: String) -> Dictionary:
 		return _player_command_result("切换地点", false, "当前地点与目标地点没有直接入口连接")
 	var point := endpoint.get("position", {}) as Dictionary
 	var position := Vector2(float(point.get("x", 0.0)), float(point.get("y", 0.0)))
-	var membership := PERCEPTION_RUNTIME._membership(self, String(endpoint.get("spaceId", "")), position)
+	var membership := PERCEPTION_RUNTIME._membership(self , String(endpoint.get("spaceId", "")), position)
 	if membership.is_empty() or String(membership.get("placeName", "")) != normalized:
 		return _player_command_result("切换地点", false, "目标入口不是合法世界位置")
 	return _apply_player_avatar_state(
@@ -8286,7 +8286,7 @@ func return_player_avatar_outdoors(
 	var target_space_id := String(endpoint.get("spaceId", ""))
 	if target_space_id != "town_outdoor":
 		return _player_command_result("离开室内", false, "目标连接不是室外出口")
-	var membership := PERCEPTION_RUNTIME._membership(self, target_space_id, safe_return_position)
+	var membership := PERCEPTION_RUNTIME._membership(self , target_space_id, safe_return_position)
 	if (
 		membership.is_empty()
 		or String(membership.get("placeName", "")) != normalized
@@ -8309,7 +8309,7 @@ func player_start_conversation(target_name: String, say: String, narration: Stri
 	if not _running:
 		return _player_command_result("发起对话", false, "世界尚未运行")
 	var player_name := String(_player_avatar.get("name", ""))
-	if not CONVERSATION_RUNTIME._active_conversation_for_person(self, _player_avatar_id()).is_empty():
+	if not CONVERSATION_RUNTIME._active_conversation_for_person(self , _player_avatar_id()).is_empty():
 		return _player_command_result("发起对话", false, "化身已经在参与一段对话")
 	var normalized_target := _resident_key(target_name)
 	if normalized_target.is_empty():
@@ -8317,9 +8317,9 @@ func player_start_conversation(target_name: String, say: String, narration: Stri
 	if not _resident_is_alive(normalized_target):
 		return _player_command_result("发起对话", false, "死亡居民不能参与对话")
 	var target := _residents[normalized_target] as Dictionary
-	if not PERCEPTION_RUNTIME._are_nearby(self, _player_avatar, target):
+	if not PERCEPTION_RUNTIME._are_nearby(self , _player_avatar, target):
 		return _player_command_result("发起对话", false, "对话目标不在化身感知范围内")
-	if not CONVERSATION_RUNTIME._active_conversation_for_person(self, normalized_target).is_empty():
+	if not CONVERSATION_RUNTIME._active_conversation_for_person(self , normalized_target).is_empty():
 		return _player_command_result("发起对话", false, "对话目标正在参与另一段对话")
 	var action := {
 		"target": _resident_display_name(normalized_target),
@@ -8332,8 +8332,8 @@ func player_start_conversation(target_name: String, say: String, narration: Stri
 	if not turn_error.is_empty():
 		return _player_command_result("发起对话", false, turn_error)
 	_bump_world_revision(false)
-	CONVERSATION_RUNTIME._start_conversation(self, _player_avatar_id(), action)
-	_player_avatar["doing"] = ACTION_PRESENTATION._conversation_doing(self, action)
+	CONVERSATION_RUNTIME._start_conversation(self , _player_avatar_id(), action)
+	_player_avatar["doing"] = ACTION_PRESENTATION._conversation_doing(self , action)
 	player_avatar_state_changed.emit(get_player_avatar_state())
 	_notify_world_revision()
 	return _player_command_result("发起对话", true, "世界已确认玩家搭话", {"conversation": get_conversation(String(action.get("conversationId", "")))})
@@ -8348,7 +8348,7 @@ func player_reply_conversation(
 ) -> Dictionary:
 	if not _running:
 		return _player_command_result("继续对话", false, "世界尚未运行")
-	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, _player_avatar_id())
+	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , _player_avatar_id())
 	if conversation.is_empty() or String(conversation.get("conversationId", "")) != conversation_id:
 		return _player_command_result("继续对话", false, "化身当前没有这段活动对话")
 	if String(conversation.get("waitingFor", "")) != _player_avatar_id():
@@ -8358,8 +8358,8 @@ func player_reply_conversation(
 	if not turn_error.is_empty():
 		return _player_command_result("继续对话", false, turn_error)
 	_bump_world_revision(false)
-	_player_avatar["doing"] = ACTION_PRESENTATION._conversation_doing(self, action)
-	CONVERSATION_RUNTIME._apply_conversation_reply(self, _player_avatar_id(), action)
+	_player_avatar["doing"] = ACTION_PRESENTATION._conversation_doing(self , action)
+	CONVERSATION_RUNTIME._apply_conversation_reply(self , _player_avatar_id(), action)
 	player_avatar_state_changed.emit(get_player_avatar_state())
 	_notify_world_revision()
 	return _player_command_result("继续对话", true, "世界已确认玩家答话", {"conversation": get_conversation(conversation_id)})
@@ -8368,7 +8368,7 @@ func player_reply_conversation(
 func player_end_conversation(conversation_id: String, narration: String = "结束交谈") -> Dictionary:
 	if not _running:
 		return _player_command_result("结束对话", false, "世界尚未运行")
-	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, _player_avatar_id())
+	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , _player_avatar_id())
 	if conversation.is_empty() or String(conversation.get("conversationId", "")) != conversation_id:
 		return _player_command_result("结束对话", false, "化身当前没有这段活动对话")
 	var normalized := narration.strip_edges()
@@ -8377,7 +8377,7 @@ func player_end_conversation(conversation_id: String, narration: String = "结�
 	var action := {"conversation_id": conversation_id, "say": "", "narration": normalized, "photos": [], "end": true}
 	_bump_world_revision(false)
 	_player_avatar["doing"] = normalized
-	CONVERSATION_RUNTIME._apply_conversation_reply(self, _player_avatar_id(), action)
+	CONVERSATION_RUNTIME._apply_conversation_reply(self , _player_avatar_id(), action)
 	player_avatar_state_changed.emit(get_player_avatar_state())
 	_notify_world_revision()
 	return _player_command_result("结束对话", true, "世界已确认玩家结束对话", {"conversation": get_conversation(conversation_id)})
@@ -8386,17 +8386,17 @@ func player_end_conversation(conversation_id: String, narration: String = "结�
 func player_reject_conversation(conversation_id: String, narration: String = "没有接话") -> Dictionary:
 	if not _running:
 		return _player_command_result("拒绝对话", false, "世界尚未运行")
-	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, _player_avatar_id())
+	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , _player_avatar_id())
 	if conversation.is_empty() or String(conversation.get("conversationId", "")) != conversation_id:
 		return _player_command_result("拒绝对话", false, "化身当前没有这段活动对话")
-	if not CONVERSATION_RUNTIME._is_initial_invitation_for(self, _player_avatar_id(), conversation):
+	if not CONVERSATION_RUNTIME._is_initial_invitation_for(self , _player_avatar_id(), conversation):
 		return _player_command_result("拒绝对话", false, "只有尚未回应的搭话邀请可以拒绝")
 	var normalized := narration.strip_edges()
 	if normalized.is_empty():
 		return _player_command_result("拒绝对话", false, "拒绝对话需要可观察的动作描述")
 	_bump_world_revision(false)
 	_player_avatar["doing"] = normalized
-	CONVERSATION_RUNTIME._end_conversation(self, conversation_id, "拒绝接话", "rejected")
+	CONVERSATION_RUNTIME._end_conversation(self , conversation_id, "拒绝接话", "rejected")
 	player_avatar_state_changed.emit(get_player_avatar_state())
 	_notify_world_revision()
 	return _player_command_result("拒绝对话", true, "世界已确认玩家拒绝接话", {"conversation": get_conversation(conversation_id)})
@@ -9135,7 +9135,7 @@ func get_public_social_matter_activity() -> Dictionary:
 		) as Dictionary
 		if execution.is_empty():
 			continue
-		var cue_value: Variant = ACTION_PRESENTATION._resident_activity_cue(self, resident)
+		var cue_value: Variant = ACTION_PRESENTATION._resident_activity_cue(self , resident)
 		var cue := (
 			cue_value as Dictionary
 			if cue_value is Dictionary
@@ -9248,7 +9248,7 @@ func _build_agent_initialization(resident_id: String) -> Dictionary:
 			"home": String(other_social.get("home", "")),
 			"workplace": String(other_social.get("workplace", "")),
 			"lifecycle_status": String(
-				(_resident_lifecycle.get_resident_state(other_id,) as Dictionary).get("status", "alive"),
+				(_resident_lifecycle.get_resident_state(other_id, ) as Dictionary).get("status", "alive"),
 			),
 		})
 	return {
@@ -9514,11 +9514,11 @@ func submit_agent_decision(resident_name: String, decision: Dictionary) -> Dicti
 		resident.get("decisionMayInterruptCurrent", false)
 	)
 	var pending_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(
-		self,
+		self ,
 		resident_name,
 	)
 	var invitation_requires_reply := CONVERSATION_RUNTIME._is_initial_invitation_for(
-		self,
+		self ,
 		resident_name,
 		pending_conversation,
 	)
@@ -9810,7 +9810,7 @@ func submit_agent_decision(resident_name: String, decision: Dictionary) -> Dicti
 			String((preparation.get("errors", ["动作不合法"]) as Array)[0]),
 		)
 		if conversation_end_reason == "拒绝接话":
-			CONVERSATION_RUNTIME._end_conversation(self, String(active_conversation.get("conversationId", "")), conversation_end_reason, "rejected")
+			CONVERSATION_RUNTIME._end_conversation(self , String(active_conversation.get("conversationId", "")), conversation_end_reason, "rejected")
 		return _complete_agent_submission(rejection)
 	var prepared_action := (
 		preparation.get("action", {}) as Dictionary
@@ -9941,7 +9941,7 @@ func _submit_conversation_follow_up(
 	var conversation_id := String(conversation.get("conversationId", "")).strip_edges()
 	if conversation_id != String(action.get("conversation_id", "")).strip_edges():
 		return
-	var beneficiary_ref := CONVERSATION_RUNTIME._other_conversation_participant(self, conversation, resident_id)
+	var beneficiary_ref := CONVERSATION_RUNTIME._other_conversation_participant(self , conversation, resident_id)
 	var beneficiary_id := _person_id_for_name(beneficiary_ref)
 	var capability_id := String(option.get("capability_id", "")).strip_edges()
 	var target_refs := (option.get("target_refs", {}) as Dictionary).duplicate(true)
@@ -9976,7 +9976,7 @@ func _submit_conversation_follow_up(
 		return
 	var matter := _social_matters.find_active_matter("conversation_commitment",
 		commitment_id,
-		[resident_id, beneficiary_id],) as Dictionary
+		[resident_id, beneficiary_id], ) as Dictionary
 	if matter.is_empty():
 		return
 	var matter_id := String(matter.get("matter_id", ""))
@@ -9984,13 +9984,13 @@ func _submit_conversation_follow_up(
 		0,
 		_active_social_commitment_count(resident_id),
 		now,
-		matter_id,) as Dictionary
+		matter_id, ) as Dictionary
 	if candidate.is_empty():
 		return
 	var round_result := _social_matters.begin_response_round(matter_id,
 		[candidate],
 		now,
-		now + 1,) as Dictionary
+		now + 1, ) as Dictionary
 	if round_result.get("ok") != true:
 		return
 	matter = _social_matters.get_matter(matter_id) as Dictionary
@@ -10002,12 +10002,12 @@ func _submit_conversation_follow_up(
 			"response_round_id": String(matter.get("response_round_id", "")),
 			"option_id": "accept",
 		},
-		now,) as Dictionary
+		now, ) as Dictionary
 	if submitted.get("ok") != true:
 		return
 	var settled := _social_matters.settle_response_round(matter_id,
 		now,
-		"close",) as Dictionary
+		"close", ) as Dictionary
 	if settled.get("ok") != true:
 		return
 	_reconcile_social_assignments(matter_id)
@@ -10259,11 +10259,11 @@ func _submit_legacy_prop_activity(
 		)
 		rejection["retryable"] = bool(mapping.get("retryable", false))
 		if conversation_end_reason == "拒绝接话":
-			var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, 
+			var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self ,
 				resident_id
 			)
 			if not active_conversation.is_empty():
-				CONVERSATION_RUNTIME._end_conversation(self, 
+				CONVERSATION_RUNTIME._end_conversation(self ,
 					String(active_conversation.get("conversationId", "")),
 					conversation_end_reason,
 					"rejected",
@@ -10481,9 +10481,9 @@ func _activate_agent_activity(
 			conversation_end_reason,
 		)
 	if not conversation_end_reason.is_empty():
-		var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_id)
+		var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_id)
 		if not active_conversation.is_empty():
-			CONVERSATION_RUNTIME._end_conversation(self, 
+			CONVERSATION_RUNTIME._end_conversation(self ,
 				String(active_conversation.get("conversationId", "")),
 				conversation_end_reason,
 				(
@@ -10499,7 +10499,7 @@ func _activate_agent_activity(
 		"action": _public_current_action(
 			resident.get("currentAction", {}) as Dictionary
 		),
-		"actionPhase": ACTION_PRESENTATION._resident_action_phase_projection(self, resident),
+		"actionPhase": ACTION_PRESENTATION._resident_action_phase_projection(self , resident),
 		"activity": (
 			performed.get("execution", {}) as Dictionary
 		).duplicate(true),
@@ -10673,9 +10673,9 @@ func _activate_legacy_prop_activity(
 			conversation_end_reason,
 		)
 	if not conversation_end_reason.is_empty():
-		var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_id)
+		var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_id)
 		if not active_conversation.is_empty():
-			CONVERSATION_RUNTIME._end_conversation(self, 
+			CONVERSATION_RUNTIME._end_conversation(self ,
 				String(active_conversation.get("conversationId", "")),
 				conversation_end_reason,
 				(
@@ -10691,7 +10691,7 @@ func _activate_legacy_prop_activity(
 		"action": _public_current_action(
 			resident.get("currentAction", {}) as Dictionary
 		),
-		"actionPhase": ACTION_PRESENTATION._resident_action_phase_projection(self, resident),
+		"actionPhase": ACTION_PRESENTATION._resident_action_phase_projection(self , resident),
 		"activity": (
 			performed.get("execution", {}) as Dictionary
 		).duplicate(true),
@@ -10769,9 +10769,9 @@ func _activate_activity_routine(
 			conversation_end_reason,
 		)
 	if not conversation_end_reason.is_empty():
-		var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_id)
+		var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_id)
 		if not active_conversation.is_empty():
-			CONVERSATION_RUNTIME._end_conversation(self, 
+			CONVERSATION_RUNTIME._end_conversation(self ,
 				String(active_conversation.get("conversationId", "")),
 				conversation_end_reason,
 				(
@@ -10790,7 +10790,7 @@ func _activate_activity_routine(
 		"action": _public_current_action(
 			resident.get("currentAction", {}) as Dictionary
 		),
-		"actionPhase": ACTION_PRESENTATION._resident_action_phase_projection(self, resident),
+		"actionPhase": ACTION_PRESENTATION._resident_action_phase_projection(self , resident),
 		"activity": (
 			performed.get("execution", {}) as Dictionary
 		).duplicate(true),
@@ -10832,12 +10832,12 @@ func _reject_legacy_prop_activation(
 		reason,
 		true,
 		true,
-		ACTION_PRESENTATION._preview_action_presentation(self, resident, {"action": action}),
+		ACTION_PRESENTATION._preview_action_presentation(self , resident, {"action": action}),
 	)
 	if conversation_end_reason == "拒绝接话":
-		var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_id)
+		var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_id)
 		if not active_conversation.is_empty():
-			CONVERSATION_RUNTIME._end_conversation(self, 
+			CONVERSATION_RUNTIME._end_conversation(self ,
 				String(active_conversation.get("conversationId", "")),
 				conversation_end_reason,
 				"rejected",
@@ -10875,8 +10875,8 @@ func _confirm_action_preview(
 		"decisionId": decision_id,
 		"actionId": action_id,
 		"handling": handling,
-		"summary": ACTION_PRESENTATION._action_preview_summary(self, action, handling == "continue_current"),
-		"publicThought": ACTION_PRESENTATION._public_surface_thought(self, action),
+		"summary": ACTION_PRESENTATION._action_preview_summary(self , action, handling == "continue_current"),
+		"publicThought": ACTION_PRESENTATION._public_surface_thought(self , action),
 		"confirmedRevision": _world_revision,
 		"confirmedAt": get_time(),
 		"displaySeconds": CONFIRMED_ACTION_PREVIEW_SECONDS,
@@ -10908,10 +10908,10 @@ func _confirm_action_preview(
 		_bump_world_revision()
 		resident_action_phase_changed.emit(
 			resident_id,
-			ACTION_PRESENTATION._resident_action_phase_projection(self, resident),
+			ACTION_PRESENTATION._resident_action_phase_projection(self , resident),
 		)
 		_emit_resident_state_changed(resident_id)
-	var phase := ACTION_PRESENTATION._resident_action_phase_projection(self, resident)
+	var phase := ACTION_PRESENTATION._resident_action_phase_projection(self , resident)
 	return {
 		"ok": true,
 		"status": "continued" if handling == "continue_current" else "accepted",
@@ -10952,18 +10952,18 @@ func _activate_confirmed_action(
 		return
 	var handling := String(preview.get("handling", ""))
 	var conversation_end_reason := String(preview.get("conversationEndReason", ""))
-	var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_id)
+	var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_id)
 	if handling == "continue_current":
 		_resume_conversation_follow_up_reconsideration(resident)
 		_resume_suspended_action(resident)
 		if not conversation_end_reason.is_empty() and not active_conversation.is_empty():
-			CONVERSATION_RUNTIME._end_conversation(self, 
+			CONVERSATION_RUNTIME._end_conversation(self ,
 				String(active_conversation.get("conversationId", "")),
 				conversation_end_reason,
 				"rejected",
 			)
 		_bump_world_revision()
-		var continued_phase := ACTION_PRESENTATION._resident_action_phase_projection(self, resident)
+		var continued_phase := ACTION_PRESENTATION._resident_action_phase_projection(self , resident)
 		resident_action_phase_changed.emit(resident_id, continued_phase.duplicate(true))
 		_emit_resident_state_changed(resident_id)
 		return
@@ -11057,7 +11057,7 @@ func _activate_confirmed_action(
 		and not active_conversation.is_empty()
 		and String(active_conversation.get("waitingFor", "")) == resident_id
 	):
-		CONVERSATION_RUNTIME._activate_conversation_reply(self,
+		CONVERSATION_RUNTIME._activate_conversation_reply(self ,
 			resident_id,
 			resident,
 			action,
@@ -11133,13 +11133,13 @@ func _activate_confirmed_action(
 	resident_action_started.emit(resident_display_name, presented_action)
 	resident_action_phase_changed.emit(
 		resident_id,
-		ACTION_PRESENTATION._resident_action_phase_projection(self, resident),
+		ACTION_PRESENTATION._resident_action_phase_projection(self , resident),
 	)
 	WORLD_PERFORMANCE_PROBE.record_lap(probe_lap_usec, "activation_action_signals")
 	var action_type := String(action.get("type", ""))
 	if action_type == "搭话":
 		if String(action.get("approachMode", "")).is_empty():
-			CONVERSATION_RUNTIME._start_conversation(self, resident_id, action)
+			CONVERSATION_RUNTIME._start_conversation(self , resident_id, action)
 			_submit_optional_social_request(
 				resident_id,
 				action,
@@ -11152,11 +11152,11 @@ func _activate_confirmed_action(
 			preview.get("conversationFollowUp", {}) as Dictionary,
 			active_conversation,
 		)
-		CONVERSATION_RUNTIME._apply_conversation_reply(self, resident_id, action)
+		CONVERSATION_RUNTIME._apply_conversation_reply(self , resident_id, action)
 		var conflict_intent := preview.get("conflictIntent", {}) as Dictionary
 		if not conflict_intent.is_empty():
 			var conflict_result := CONVERSATION_CONFLICT_BRIDGE.activate_after_reply(
-				self,
+				self ,
 				resident_id,
 				resident,
 				conflict_intent,
@@ -11174,7 +11174,7 @@ func _activate_confirmed_action(
 					true,
 				)
 	elif not conversation_end_reason.is_empty() and not active_conversation.is_empty():
-		CONVERSATION_RUNTIME._end_conversation(self, 
+		CONVERSATION_RUNTIME._end_conversation(self ,
 			String(active_conversation.get("conversationId", "")),
 			conversation_end_reason,
 			"rejected" if conversation_end_reason == "拒绝接话" else "interrupted",
@@ -11205,14 +11205,14 @@ func _activate_conflict_action(
 		not conversation_end_reason.is_empty()
 		and not active_conversation.is_empty()
 	):
-		CONVERSATION_RUNTIME._end_conversation(self, 
+		CONVERSATION_RUNTIME._end_conversation(self ,
 			String(active_conversation.get("conversationId", "")),
 			conversation_end_reason,
 			"interrupted",
 		)
 	var result := (
 		_conflict_agent_world_bridge.execute_action(resident_id,
-			action,) as Dictionary
+			action, ) as Dictionary
 		if _conflict_agent_world_bridge != null
 		else {"ok": false, "errorCode": "CONFLICT_BRIDGE_NOT_CONFIGURED"}
 	)
@@ -11258,13 +11258,13 @@ func _reject_confirmed_action_preview_activation(
 		String(action.get("action_id", "")),
 		"rejected",
 		reason,
-		ACTION_PRESENTATION._preview_action_presentation(self, resident, {"action": action}),
+		ACTION_PRESENTATION._preview_action_presentation(self , resident, {"action": action}),
 	)
 	_schedule_decision(resident_id, false)
 	_bump_world_revision()
 	resident_action_phase_changed.emit(
 		resident_id,
-		ACTION_PRESENTATION._resident_action_phase_projection(self, resident),
+		ACTION_PRESENTATION._resident_action_phase_projection(self , resident),
 	)
 	_emit_resident_state_changed(resident_id)
 
@@ -11310,11 +11310,11 @@ func _release_observed_action_preview() -> void:
 
 
 func _rebase_action_timing(action: Dictionary) -> void:
-	ACTION_TIMING.rebase_action_timing(self, action)
+	ACTION_TIMING.rebase_action_timing(self , action)
 
 
 func _resume_suspended_action(resident: Dictionary) -> void:
-	ACTION_TIMING.resume_suspended_action(self, resident)
+	ACTION_TIMING.resume_suspended_action(self , resident)
 
 
 func _append_action_result_without_schedule(
@@ -11387,8 +11387,8 @@ func _resident_runtime(record: Dictionary, world_state: Dictionary, resident_id 
 		"socialState": (record.get("socialState", {}) as Dictionary).duplicate(true),
 		"arrivalState": {
 			"status": "arrived",
-			"scheduledAbsoluteMinute": -1,
-			"arrivedAbsoluteMinute": -1,
+			"scheduledAbsoluteMinute": - 1,
+			"arrivedAbsoluteMinute": - 1,
 		},
 		"position": Vector2(float(pair[0]), float(pair[1])),
 		"spaceId": String(world_state.get("spaceId", "")),
@@ -11400,7 +11400,7 @@ func _resident_runtime(record: Dictionary, world_state: Dictionary, resident_id 
 		"nearby": [],
 		"currentAction": {},
 		"confirmedActionPreview": {},
-		"actionSuspendedAbsoluteMinute": -1,
+		"actionSuspendedAbsoluteMinute": - 1,
 		"routeConnector": [],
 		"conversationId": "",
 		"conversation": null,
@@ -11504,7 +11504,7 @@ func _avatar_runtime(record: Dictionary) -> Dictionary:
 
 # 字段派生逻辑在 RESIDENT_STATE_PROJECTION 子模块,与 town_hud 轻量投影共享(A2)。
 func _resident_state_projection(resident: Dictionary) -> Dictionary:
-	return RESIDENT_STATE_PROJECTION.project(self, resident)
+	return RESIDENT_STATE_PROJECTION.project(self , resident)
 
 
 # 表现状态通知的唯一发射口(docs/居民状态通知链减负方案.md C2):载荷为
@@ -11515,7 +11515,7 @@ func _emit_resident_state_changed(resident_ref: String) -> void:
 		resident_state_changed.emit("", {})
 		return
 	var projected_state := RESIDENT_STATE_PROJECTION.project_emit(
-		self,
+		self ,
 		_residents[resident_id] as Dictionary,
 	)
 	resident_state_changed.emit(
@@ -11569,14 +11569,19 @@ func person_name_for_id(person_id: String) -> String:
 func player_avatar_id() -> String:
 	return _player_avatar_id()
 
-
 func queue_world_event(resident_name: String, source: Dictionary) -> Dictionary:
 	return _queue_world_event(resident_name, source)
 
+func request_runtime_observation_wake(resident_ref: String) -> Dictionary:
+	var resident_id := _resident_key(resident_ref)
+	if not _running: return {"ok": false, "errorCode": "WORLD_NOT_RUNNING", "retryable": false}
+	if resident_id.is_empty() or not _resident_is_present(_residents.get(resident_id, {}) as Dictionary): return {"ok": false, "errorCode": "RUNTIME_OBSERVATION_TARGET_UNAVAILABLE", "retryable": false}
+	if bool((_residents[resident_id] as Dictionary).get("decisionPending", false)): return {"ok": true, "scheduled": false, "decisionId": String((_residents[resident_id] as Dictionary).get("validDecisionId", ""))}
+	_schedule_decision(resident_id, false, false, false, false, true)
+	return {"ok": true, "scheduled": bool((_residents[resident_id] as Dictionary).get("decisionPending", false)), "decisionId": String((_residents[resident_id] as Dictionary).get("validDecisionId", ""))}
 
 func bump_world_revision(notify := true) -> void:
 	_bump_world_revision(notify)
-
 
 func _resident_is_present(resident: Dictionary) -> bool:
 	var resident_id := String(resident.get("residentId", "")).strip_edges()
@@ -11683,7 +11688,7 @@ func _resident_is_waiting_for_active_onsite_service(
 		or request_id.is_empty()
 	):
 		return false
-	var request := _occupation_services.request(request_id,) as Dictionary
+	var request := _occupation_services.request(request_id, ) as Dictionary
 	return (
 		String(request.get("state", ""))
 		in ["pending", "waiting", "in_progress"]
@@ -11716,15 +11721,133 @@ func _schedule_decision(
 	if (
 		not force_fresh
 		and _resident_is_waiting_for_active_onsite_service(resident_name)
-		and CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_name).is_empty()
+		and CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_name).is_empty()
 	):
-		if bool(resident.get("decisionPending", false)):
-			_restore_inflight_facts(resident)
-			resident["decisionPending"] = false
-			resident["validDecisionId"] = ""
-			resident["pendingWake"] = {}
-			resident["wakeDispatchQueued"] = false
-		return
+		var resident_for_wait_guard := _residents.get(resident_name, {}) as Dictionary
+		var wait_action := (
+			resident_for_wait_guard.get("currentAction", {}) as Dictionary
+		)
+		var bound_request_id := String(wait_action.get("serviceRequestId", ""))
+		var should_break_wait := force_fresh
+		var now_for_soft := _authoritative_absolute_minute()
+		var request_created_for_soft := -1
+		var place_for_soft := ""
+		var kind_for_soft := ""
+		if not bound_request_id.is_empty():
+			var probe_req := _occupation_services.request(bound_request_id) as Dictionary
+			if not probe_req.is_empty():
+				request_created_for_soft = int(probe_req.get("createdAtMinute", -1))
+				place_for_soft = String(probe_req.get("placeId", ""))
+				kind_for_soft = String(probe_req.get("kind", ""))
+		var ahead_count_for_soft := -1
+		if not place_for_soft.is_empty() or not kind_for_soft.is_empty():
+			var ahead_so_far := 0
+			var sort_anchor := request_created_for_soft
+			for request_value: Variant in (_occupation_services.snapshot().get("requests", []) as Array):
+				var r := request_value as Dictionary
+				var r_state := String(r.get("state", ""))
+				if r_state not in ["pending", "waiting", "in_progress"]:
+					continue
+				var r_place := String(r.get("placeId", ""))
+				var r_kind := String(r.get("kind", ""))
+				if not place_for_soft.is_empty() and r_place != place_for_soft:
+					continue
+				if not kind_for_soft.is_empty() and r_kind != kind_for_soft:
+					continue
+				var r_id := String(r.get("requestId", ""))
+				var r_created := int(r.get("createdAtMinute", -1))
+				if r_created < 0:
+					continue
+				if r_id == bound_request_id:
+					sort_anchor = r_created
+					continue
+				if r_created <= sort_anchor:
+					ahead_so_far += 1
+			ahead_count_for_soft = ahead_so_far
+		var waited_so_far := maxi(0, now_for_soft - request_created_for_soft) if request_created_for_soft >= 0 else 0
+		var staffed_so_far := _staffed_count_at_place(place_for_soft) if not place_for_soft.is_empty() else 0
+		var last_soft := int(resident_for_wait_guard.get("_onsiteLastSoftReconsiderMinute", -1))
+		var soft_cooldown := maxi(1, ONSITE_WAIT_SOFT_RECONSIDER_MINUTES)
+		var soft_reconsider_triggered := false
+		if (
+			not should_break_wait
+			and waited_so_far >= ONSITE_WAIT_SOFT_RECONSIDER_MINUTES
+			and (last_soft < 0 or (now_for_soft - last_soft) >= soft_cooldown)
+		):
+			soft_reconsider_triggered = true
+		if not soft_reconsider_triggered:
+			if (
+				staffed_so_far <= 1
+				and ahead_count_for_soft >= ONSITE_WAIT_STAFF_AHEAD_THRESHOLD_FOR_RECONSIDER
+				and (last_soft < 0 or (now_for_soft - last_soft) >= soft_cooldown)
+			):
+				soft_reconsider_triggered = true
+		if not should_break_wait and not bound_request_id.is_empty():
+			var bound_request := _occupation_services.request(bound_request_id) as Dictionary
+			if bound_request.is_empty():
+				should_break_wait = true
+			else:
+				if _occupation_service_wait_deadline_applies(bound_request):
+					var now := _authoritative_absolute_minute()
+					var bound_context := (
+						bound_request.get("context", {}) as Dictionary
+					).duplicate(true)
+					var until := int(bound_context.get("onsiteWaitUntilMinute", -1))
+					if until > 0 and now >= until:
+						should_break_wait = true
+					var created := int(bound_request.get("createdAtMinute", -1))
+					var waited := maxi(0, now - created)
+					var kind := String(bound_request.get("kind", ""))
+					var hard_cap := 240
+					if kind in ["clinic", "dining_order", "cafe_order"]:
+						hard_cap = 480
+					if waited >= hard_cap:
+						should_break_wait = true
+				if (
+					String(resident_for_wait_guard.get("currentPlace", ""))
+					!= String(bound_request.get("placeId", ""))
+				):
+					should_break_wait = true
+				if not should_break_wait:
+					var kind_for_staffing := String(bound_request.get("kind", ""))
+					if kind_for_staffing in OCCUPATION_SERVICE_PRESENCE_REQUIRED_KINDS:
+						var req_place := String(bound_request.get("placeId", ""))
+						for occupation_id_value: Variant in _work_occupation_ids_for_resident(
+							resident_name,
+						):
+							var occ_id := String(occupation_id_value)
+							var post := _staffing.post_for_occupation(occ_id) as Dictionary
+							if (
+								not post.is_empty()
+								and String(post.get("placeId", "")) == req_place
+								and _resident_can_work_occupation(
+									resident_name, occ_id,
+								)
+								and _resident_available_for_work(
+									resident_for_wait_guard,
+								)
+							):
+								should_break_wait = true
+								break
+		if should_break_wait:
+			if bool(resident.get("decisionPending", false)):
+				_restore_inflight_facts(resident)
+				resident["decisionPending"] = false
+				resident["validDecisionId"] = ""
+				resident["pendingWake"] = {}
+				resident["wakeDispatchQueued"] = false
+		elif soft_reconsider_triggered:
+			wake_while_current_action = true
+			resident_for_wait_guard["_onsiteLastSoftReconsiderMinute"] = now_for_soft
+			_residents[resident_name] = resident_for_wait_guard
+		else:
+			if bool(resident.get("decisionPending", false)):
+				_restore_inflight_facts(resident)
+				resident["decisionPending"] = false
+				resident["validDecisionId"] = ""
+				resident["pendingWake"] = {}
+				resident["wakeDispatchQueued"] = false
+			return
 	var preview := resident.get("confirmedActionPreview", {}) as Dictionary
 	if not preview.is_empty():
 		if not allow_current_activity_interrupt:
@@ -11782,7 +11905,7 @@ func _schedule_decision(
 		_count_agent_request_metric("decisionPendingWithoutAction")
 	if (
 		int(resident.get("actionSuspendedAbsoluteMinute", -1)) >= 0
-		and CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_name).is_empty()
+		and CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_name).is_empty()
 	):
 		_resume_suspended_action(resident)
 	resident["decisionSequence"] = int(resident.get("decisionSequence", 0)) + 1
@@ -11821,7 +11944,7 @@ func _schedule_decision(
 	if current_action.is_empty():
 		resident_action_phase_changed.emit(
 			resident_name,
-			ACTION_PRESENTATION._resident_action_phase_projection(self, resident),
+			ACTION_PRESENTATION._resident_action_phase_projection(self , resident),
 		)
 
 
@@ -12105,7 +12228,7 @@ func _prepare_action(
 				return {"ok": false, "errors": ["冲突系统尚未准备好"]}
 			var conflict_preparation := _conflict_agent_world_bridge.prepare_action(String(resident.get("residentId", "")),
 				action,
-				issued_snapshot,) as Dictionary
+				issued_snapshot, ) as Dictionary
 			if conflict_preparation.get("ok") != true:
 				return {
 					"ok": false,
@@ -12320,18 +12443,18 @@ func _polyline_prefix(
 
 
 func _indoor_navigation_for_space(space_id: String) -> Dictionary:
-	return ACTION_GEOMETRY.indoor_navigation_for_space(self, space_id)
+	return ACTION_GEOMETRY.indoor_navigation_for_space(self , space_id)
 
 
 func _portal_positions_for_space(space_id: String) -> Array[Vector2]:
-	return ACTION_GEOMETRY.portal_positions_for_space(self, space_id)
+	return ACTION_GEOMETRY.portal_positions_for_space(self , space_id)
 
 
 func _resident_idle_occupied_positions(
 	resident_id: String,
 	space_id: String,
 ) -> Array[Vector2]:
-	return ACTION_GEOMETRY.resident_idle_occupied_positions(self, resident_id, space_id)
+	return ACTION_GEOMETRY.resident_idle_occupied_positions(self , resident_id, space_id)
 
 
 func _point_near_any(
@@ -12343,7 +12466,7 @@ func _point_near_any(
 
 
 func _movement_duration_for_path(points: Array[Vector2]) -> int:
-	return ACTION_GEOMETRY.movement_duration_for_path(self, points)
+	return ACTION_GEOMETRY.movement_duration_for_path(self , points)
 
 
 func _is_continuity_wait_action(action: Dictionary) -> bool:
@@ -12387,7 +12510,7 @@ func _reject_invalid_action(
 				repeat_count >= 2
 				and String(action.get("type", "")) == "搭话"
 			),
-			ACTION_PRESENTATION._preview_action_presentation(self, resident, {"action": action}),
+			ACTION_PRESENTATION._preview_action_presentation(self , resident, {"action": action}),
 		)
 	return {"ok": false, "stale": false, "errors": [reason]}
 
@@ -12439,7 +12562,7 @@ func _accepted_conversation_follow_up(
 		if String(option.get("option_id", "")) != option_id:
 			continue
 		if option.has("integrity_key"):
-			var goal_result := _action_options.action_goal_from_option(option,) as Dictionary
+			var goal_result := _action_options.action_goal_from_option(option, ) as Dictionary
 			if goal_result.get("ok") != true:
 				continue
 		return option.duplicate(true)
@@ -12664,7 +12787,7 @@ func _direct_prop_action_available(
 	resident: Dictionary,
 	action: Dictionary,
 ) -> bool:
-	return ACTION_SUPPORT.direct_prop_action_available(self, resident_id, resident, action)
+	return ACTION_SUPPORT.direct_prop_action_available(self , resident_id, resident, action)
 
 
 func _preflight_activity_candidates(
@@ -12962,7 +13085,7 @@ func _region_activity_position_occupied(
 	resident_id: String,
 	position_value: Array,
 ) -> bool:
-	return ACTION_SUPPORT.region_activity_position_occupied(self, resident_id, position_value)
+	return ACTION_SUPPORT.region_activity_position_occupied(self , resident_id, position_value)
 
 
 func _validate_layout_occupants(
@@ -12970,11 +13093,11 @@ func _validate_layout_occupants(
 	projection: Dictionary,
 	errors: PackedStringArray,
 ) -> void:
-	ACTION_SUPPORT.validate_layout_occupants(self, space_id, projection, errors)
+	ACTION_SUPPORT.validate_layout_occupants(self , space_id, projection, errors)
 
 
 func _prepare_talk_action(resident_name: String, resident: Dictionary, action: Dictionary) -> Dictionary:
-	if not CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_name).is_empty():
+	if not CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_name).is_empty():
 		return {"ok": false, "errors": ["居民已经在参与另一段对话"]}
 	var target_resident_id := String(action.get("target_resident_id", "")).strip_edges()
 	var target_ref := target_resident_id
@@ -12996,19 +13119,19 @@ func _prepare_talk_action(resident_name: String, resident: Dictionary, action: D
 			resident_name,
 		)
 	if (
-		not PERCEPTION_RUNTIME._are_nearby(self, resident, target)
+		not PERCEPTION_RUNTIME._are_nearby(self , resident, target)
 		and postal_delivery.is_empty()
 		and medical_binding.is_empty()
 	):
 		return {"ok": false, "errors": ["搭话对象已经不在感知范围内"]}
-	if not CONVERSATION_RUNTIME._active_conversation_for_person(self, target_ref).is_empty():
+	if not CONVERSATION_RUNTIME._active_conversation_for_person(self , target_ref).is_empty():
 		return {"ok": false, "errors": ["搭话对象正在参与其他对话"]}
-	if medical_binding.is_empty() and CONVERSATION_RUNTIME._resident_pair_conversation_on_cooldown(self, 
+	if medical_binding.is_empty() and CONVERSATION_RUNTIME._resident_pair_conversation_on_cooldown(self ,
 		resident_name,
 		target_ref,
 	):
 		return {"ok": false, "errors": ["双方刚结束交谈，稍后再聊"]}
-	var turn_error := CONVERSATION_RUNTIME._validate_conversation_turn_action(self, resident_name, action, false)
+	var turn_error := CONVERSATION_RUNTIME._validate_conversation_turn_action(self , resident_name, action, false)
 	if not turn_error.is_empty():
 		return {"ok": false, "errors": [turn_error]}
 	var prepared := action.duplicate(true)
@@ -13022,7 +13145,7 @@ func _prepare_talk_action(resident_name: String, resident: Dictionary, action: D
 		prepared["medicalTaskId"] = String(
 			medical_binding.get("taskId", ""),
 		)
-	if not postal_delivery.is_empty() and not PERCEPTION_RUNTIME._are_nearby(self, resident, target):
+	if not postal_delivery.is_empty() and not PERCEPTION_RUNTIME._are_nearby(self , resident, target):
 		prepared["privateMessageId"] = String(
 			postal_delivery.get("messageId", ""),
 		)
@@ -13035,7 +13158,7 @@ func _prepare_talk_action(resident_name: String, resident: Dictionary, action: D
 
 
 func _prepare_reply_action(resident_name: String, action: Dictionary) -> Dictionary:
-	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_name)
+	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_name)
 	if conversation.is_empty():
 		return {"ok": false, "errors": ["居民当前没有可以答话的对话"]}
 	var conversation_id := String(action.get("conversation_id", "")).strip_edges()
@@ -13043,7 +13166,7 @@ func _prepare_reply_action(resident_name: String, action: Dictionary) -> Diction
 		return {"ok": false, "errors": ["答话的 conversation_id 与当前对话不一致"]}
 	if String(conversation.get("waitingFor", "")) != resident_name:
 		return {"ok": false, "errors": ["当前对话还没有轮到本居民答话"]}
-	var turn_error := CONVERSATION_RUNTIME._validate_conversation_turn_action(self, resident_name, action, true)
+	var turn_error := CONVERSATION_RUNTIME._validate_conversation_turn_action(self , resident_name, action, true)
 	if not turn_error.is_empty():
 		return {"ok": false, "errors": [turn_error]}
 	var prepared := action.duplicate(true)
@@ -13104,7 +13227,7 @@ func _advance_actions(absolute_minute: int) -> void:
 		if bool(action.get("followUpPausedForReconsideration", false)):
 			continue
 		if int(resident.get("actionSuspendedAbsoluteMinute", -1)) >= 0:
-			if not CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_name).is_empty():
+			if not CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_name).is_empty():
 				continue
 			_resume_suspended_action(resident)
 			action = resident.get("currentAction", {}) as Dictionary
@@ -13386,7 +13509,7 @@ func _hold_or_return_for_escort_companion(
 	var last_advance := int(action.get("followUpLastAdvanceMinute", absolute_minute))
 	var step_minutes := maxi(0, absolute_minute - last_advance)
 	action["followUpLastAdvanceMinute"] = absolute_minute
-	if PERCEPTION_RUNTIME._are_nearby(self, resident, companion):
+	if PERCEPTION_RUNTIME._are_nearby(self , resident, companion):
 		action["followUpLagStartedMinute"] = -1
 		resident["currentAction"] = action
 		resident["doing"] = "正带%s前往%s" % [
@@ -13461,11 +13584,11 @@ func _continue_conversation_follow_up_after_step(
 		return true
 	if mode == "escort":
 		var destination := String(action.get("followUpDestinationPlace", ""))
-		if String(resident.get("currentPlace", "")) == destination and String(person.get("currentPlace", "")) == destination and PERCEPTION_RUNTIME._are_nearby(self, resident, person):
+		if String(resident.get("currentPlace", "")) == destination and String(person.get("currentPlace", "")) == destination and PERCEPTION_RUNTIME._are_nearby(self , resident, person):
 			action["followUpPhase"] = "arrived"
 			resident["currentAction"] = action
 			return false
-		if phase == "returning_to_companion" and PERCEPTION_RUNTIME._are_nearby(self, resident, person):
+		if phase == "returning_to_companion" and PERCEPTION_RUNTIME._are_nearby(self , resident, person):
 			return _begin_escort_destination_route(resident_id, resident, action)
 		return _begin_follow_up_person_approach(resident_id, resident, action, "returning_to_companion")
 	if mode == "fetch_service":
@@ -13473,13 +13596,13 @@ func _continue_conversation_follow_up_after_step(
 			return _begin_conversation_service_collection(resident_id, resident, action)
 		if phase == "collecting":
 			action["followUpServiceCollected"] = true
-			if PERCEPTION_RUNTIME._are_nearby(self, resident, person):
+			if PERCEPTION_RUNTIME._are_nearby(self , resident, person):
 				action["followUpPhase"] = "delivered"
 				resident["currentAction"] = action
 				return false
 			return _begin_follow_up_person_approach(resident_id, resident, action, "returning_to_person")
 		if phase == "returning_to_person":
-			if PERCEPTION_RUNTIME._are_nearby(self, resident, person):
+			if PERCEPTION_RUNTIME._are_nearby(self , resident, person):
 				action["followUpPhase"] = "delivered"
 				resident["currentAction"] = action
 				return false
@@ -13524,7 +13647,7 @@ func _begin_follow_up_person_approach(
 	if target.is_empty():
 		_interrupt_action(resident_id, "无法找到约定同行者的有效位置")
 		return true
-	if PERCEPTION_RUNTIME._are_nearby(self, resident, target):
+	if PERCEPTION_RUNTIME._are_nearby(self , resident, target):
 		if phase == "returning_to_companion":
 			return _begin_escort_destination_route(resident_id, resident, previous_action)
 		previous_action["followUpPhase"] = "delivered"
@@ -13617,7 +13740,7 @@ func _advance_wait_action(
 		action.get("serviceRequestId", ""),
 	)
 	if not service_request_id.is_empty():
-		var service_request := _occupation_services.request(service_request_id,) as Dictionary
+		var service_request := _occupation_services.request(service_request_id, ) as Dictionary
 		if String(service_request.get("state", "")) in [
 			"pending",
 			"waiting",
@@ -13667,7 +13790,7 @@ func _advance_wait_action(
 		# 径向搜索会让所有居民在同一秒重复扫描碰撞数据，造成周期卡顿。
 		var next_position := _point_along_polyline(path_points, ratio)
 		var previous_place := String(resident.get("currentPlace", ""))
-		var membership := PERCEPTION_RUNTIME._membership(self,
+		var membership := PERCEPTION_RUNTIME._membership(self ,
 			String(resident.get("spaceId", "")),
 			next_position,
 		)
@@ -13783,7 +13906,7 @@ func _advance_postal_talk_approach(
 		)
 		var next_position := _point_along_polyline(path, ratio)
 		var previous_place := String(resident.get("currentPlace", ""))
-		var membership := PERCEPTION_RUNTIME._membership(self,
+		var membership := PERCEPTION_RUNTIME._membership(self ,
 			String(resident.get("spaceId", "")),
 			next_position,
 		)
@@ -13820,7 +13943,7 @@ func _advance_postal_talk_approach(
 	if not String(action.get("conversationFollowUpMode", "")).is_empty():
 		_finish_action(resident_id, "已经回到约定同行者身边")
 		return
-	if PERCEPTION_RUNTIME._are_nearby(self, resident, target):
+	if PERCEPTION_RUNTIME._are_nearby(self , resident, target):
 		for field: String in [
 			"approachMode",
 			"approachRoute",
@@ -13836,7 +13959,7 @@ func _advance_postal_talk_approach(
 		]:
 			action.erase(field)
 		resident["currentAction"] = action
-		CONVERSATION_RUNTIME._start_conversation(self, resident_id, action)
+		CONVERSATION_RUNTIME._start_conversation(self , resident_id, action)
 		return
 	var refreshed := _prepare_postal_talk_approach(
 		resident,
@@ -13878,7 +14001,7 @@ func _advance_prop_action(resident_name: String, resident: Dictionary, action: D
 	var space_id := String(resident.get("spaceId", ""))
 	var region_id := String(resident.get("regionId", ""))
 	var place_name := String(resident.get("currentPlace", ""))
-	var membership := PERCEPTION_RUNTIME._membership(self, space_id, next_position)
+	var membership := PERCEPTION_RUNTIME._membership(self , space_id, next_position)
 	if not membership.is_empty():
 		region_id = String(membership.get("regionId", region_id))
 		place_name = String(membership.get("placeName", place_name))
@@ -13953,7 +14076,7 @@ func _finish_action(resident_name: String, reason: String) -> void:
 	if _continue_conversation_follow_up_after_step(resident_name, resident, action):
 		return
 	var action_id := String(action.get("action_id", ""))
-	var result_presentation := ACTION_PRESENTATION._preview_action_presentation(self, 
+	var result_presentation := ACTION_PRESENTATION._preview_action_presentation(self ,
 		resident,
 		{"action": action},
 	)
@@ -14070,7 +14193,7 @@ func _interrupt_action(
 		else reason
 	)
 	var action_id := String(action.get("action_id", ""))
-	var result_presentation := ACTION_PRESENTATION._preview_action_presentation(self, 
+	var result_presentation := ACTION_PRESENTATION._preview_action_presentation(self ,
 		resident,
 		{"action": action},
 	)
@@ -14172,7 +14295,7 @@ func _finish_activity_action(resident_id: String) -> void:
 		action,
 		activity_execution,
 	)
-	var result_presentation := ACTION_PRESENTATION._preview_action_presentation(self, 
+	var result_presentation := ACTION_PRESENTATION._preview_action_presentation(self ,
 		resident,
 		{"action": action},
 	)
@@ -14451,7 +14574,7 @@ func _close_activity_routine(
 		routine.get("lastActivityId", "")
 	).strip_edges()
 	var result_presentation := (
-		ACTION_PRESENTATION._preview_action_presentation(self, 
+		ACTION_PRESENTATION._preview_action_presentation(self ,
 			resident,
 			{
 				"action": {
@@ -14495,7 +14618,7 @@ func _fail_activity_action(
 		action,
 		execution,
 	)
-	var result_presentation := ACTION_PRESENTATION._preview_action_presentation(self, 
+	var result_presentation := ACTION_PRESENTATION._preview_action_presentation(self ,
 		resident,
 		{"action": action},
 	)
@@ -14577,7 +14700,7 @@ func _action_still_valid(resident: Dictionary, action: Dictionary) -> bool:
 			if not position_value is Dictionary:
 				return false
 			var point := position_value as Dictionary
-			var membership := PERCEPTION_RUNTIME._membership(self, 
+			var membership := PERCEPTION_RUNTIME._membership(self ,
 				String(sample.get("spaceId", "")),
 				Vector2(float(point.get("x", 0.0)), float(point.get("y", 0.0))),
 			)
@@ -14603,7 +14726,7 @@ func _action_still_valid(resident: Dictionary, action: Dictionary) -> bool:
 					"targetPosition",
 					Vector2(INF, INF),
 				) as Vector2
-				var target_membership := PERCEPTION_RUNTIME._membership(self, 
+				var target_membership := PERCEPTION_RUNTIME._membership(self ,
 					"town_outdoor",
 					target_position,
 				)
@@ -14674,8 +14797,8 @@ func _queue_action_result(
 				current_action.get("action_id", ""),
 			)
 		).strip_edges() == action_id.strip_edges():
-			var activity_cue: Variant = ACTION_PRESENTATION._resident_activity_cue(self, resident)
-			var current_presentation: Variant = ACTION_PRESENTATION._resident_action_presentation(self, 
+			var activity_cue: Variant = ACTION_PRESENTATION._resident_activity_cue(self , resident)
+			var current_presentation: Variant = ACTION_PRESENTATION._resident_action_presentation(self ,
 				resident,
 				activity_cue,
 			)
@@ -14901,7 +15024,7 @@ func _install_resident_escort_follower(
 	var follower_action := (
 		prepared.get("action", {}) as Dictionary
 	).duplicate(true)
-	CONVERSATION_RUNTIME._decorate_conversation_follow_up_action(self, 
+	CONVERSATION_RUNTIME._decorate_conversation_follow_up_action(self ,
 		follower_action,
 		"escort_follower",
 		"following",
@@ -14953,16 +15076,19 @@ func _wake_packet(
 			# 这次唤醒是在为抵达后的下一步做决定，不能让 Agent 把仍在
 			# 路上的“去”动作当成抵达后的可继续动作。
 			perception_resident["currentAction"] = {}
+	var now := int(_environment.get_absolute_minute())
 	var nearby: Array[Dictionary] = []
 	for other_name_value: Variant in resident.get("nearby", []) as Array:
 		var other_name := String(other_name_value)
+		var other_id := _person_id_for_name(other_name)
 		var other := _person_state(other_name)
-		nearby.append({
-			"resident_id": _person_id_for_name(other_name),
-			"name": _person_name_for_id(_person_id_for_name(other_name)),
-			"doing": String(other.get("doing", "")),
-			"available_for_conversation": CONVERSATION_RUNTIME._active_conversation_for_person(self, other_name).is_empty(),
-		})
+		nearby.append(_agent_resident_overview_entry(
+			other_id,
+			_person_name_for_id(other_id),
+			other,
+			now,
+			true,
+		))
 	var public_events := _agent_fact_payloads(events)
 	var public_results := _agent_fact_payloads(results)
 	var social_results: Array[Dictionary] = []
@@ -15027,7 +15153,7 @@ func _wake_packet(
 			"me": {
 				"doing": String(perception_resident.get("doing", "")),
 				"current_action": ACTION_PRESENTATION._agent_current_action(
-					self,
+					self ,
 					perception_resident.get("currentAction", {}) as Dictionary,
 				),
 				"body": (perception_resident.get("body", {}) as Dictionary).duplicate(true),
@@ -15037,8 +15163,8 @@ func _wake_packet(
 						_empty_activity_state(),
 					) as Dictionary
 				).duplicate(true),
-				"conditions": _resident_conditions.get_conditions(resident_name,) as Array,
-				"activeNeeds": _resident_conditions.get_active_needs(resident_name,) as Array,
+				"conditions": _resident_conditions.get_conditions(resident_name, ) as Array,
+				"activeNeeds": _resident_conditions.get_active_needs(resident_name, ) as Array,
 			},
 			"nearby": nearby,
 			"place": place_snapshot,
@@ -15089,6 +15215,166 @@ func _wake_packet(
 	}
 
 
+func _agent_active_service_for_resident(other_id: String) -> Dictionary:
+	var empty: Dictionary = {}
+	if other_id.is_empty() or not _residents.has(other_id):
+		return empty
+	var other := _residents[other_id] as Dictionary
+	var action := other.get("currentAction", {}) as Dictionary
+	var request_id := String(action.get("serviceRequestId", "")) if not action.is_empty() else ""
+	if request_id.is_empty():
+		return empty
+	var req := _occupation_services.request(request_id) as Dictionary
+	if req.is_empty():
+		return empty
+	var kind := String(req.get("kind", ""))
+	var state := String(req.get("state", ""))
+	if state not in ["pending", "waiting", "in_progress"]:
+		return empty
+	var ctx := req.get("context", {}) as Dictionary
+	var created := int(req.get("createdAtMinute", -1))
+	var now := _authoritative_absolute_minute()
+	var waited := maxi(0, now - created) if created >= 0 else 0
+	var place_id := String(req.get("placeId", ""))
+	var ahead_count := 0
+	var same_place_in_progress := 0
+	var req_created_for_sort := created
+	for request_value: Variant in (_occupation_services.snapshot().get("requests", []) as Array):
+		var r := request_value as Dictionary
+		var r_place := String(r.get("placeId", ""))
+		var r_state := String(r.get("state", ""))
+		if r_state not in ["pending", "waiting", "in_progress"]:
+			continue
+		var r_kind := String(r.get("kind", ""))
+		if not r_place.is_empty() and r_place != place_id:
+			if not kind.is_empty() and r_kind != kind:
+				continue
+		var r_created := int(r.get("createdAtMinute", -1))
+		if r_created < 0:
+			continue
+		if String(r.get("requestId", "")) == request_id:
+			req_created_for_sort = r_created
+			continue
+		if r_created <= req_created_for_sort:
+			ahead_count += 1
+		if r_state == "in_progress" and (
+			(place_id.is_empty() and r_place == place_id)
+			or (not place_id.is_empty() and r_place == place_id)
+		):
+			same_place_in_progress += 1
+	var workers_here := _staffed_count_at_place(place_id)
+	return {
+		"request_id": request_id,
+		"kind": kind,
+		"state": state,
+		"place_id": place_id,
+		"waited_minutes": waited,
+		"ahead_count": ahead_count,
+		"in_progress_count": same_place_in_progress,
+		"workers_staffed": workers_here,
+		"customer_service_mode": String(ctx.get("customerServiceMode", "")),
+		"subject_label": String(req.get("subjectLabel", "")),
+	}
+
+
+func _staffed_count_at_place(place_id: String) -> int:
+	if place_id.is_empty():
+		return 0
+	var count := 0
+	for resident_value: Variant in _residents.values():
+		var r := resident_value as Dictionary
+		if not _resident_is_present(r):
+			continue
+		if String(r.get("currentPlace", "")) != place_id:
+			continue
+		var occupations := _work_occupation_ids_for_resident(String(r.get("residentId", "")))
+		if occupations.is_empty():
+			continue
+		for occ_id_value: Variant in occupations:
+			var post := _staffing.post_for_occupation(String(occ_id_value)) as Dictionary
+			if not post.is_empty() and String(post.get("placeId", "")) == place_id:
+				if _resident_available_for_work(r):
+					count += 1
+				break
+	return count
+
+
+func _agent_resident_overview_entry(
+	other_id: String,
+	other_name: String,
+	other: Dictionary,
+	now: int,
+	is_nearby: bool,
+) -> Dictionary:
+	var social_state := other.get("socialState", {}) as Dictionary
+	var action := other.get("currentAction", {}) as Dictionary
+	var action_type := String(action.get("type", "")) if not action.is_empty() else ""
+	var duration := 0
+	var remaining := 0
+	if not action.is_empty():
+		var started := int(action.get("startedAbsoluteMinute", -1))
+		var complete := int(action.get("completeAbsoluteMinute", -1))
+		if started >= 0:
+			duration = maxi(0, now - started)
+		if complete >= 0:
+			remaining = maxi(0, complete - now)
+	var conv_partner_name := ""
+	var active_conv := CONVERSATION_RUNTIME._active_conversation_for_person(self , other_name)
+	if not active_conv.is_empty():
+		for pid_value: Variant in (active_conv.get("participantIds", []) as Array):
+			var pid := String(pid_value)
+			if pid != other_id:
+				conv_partner_name = _person_name_for_id(pid)
+				break
+	var sub_nearby_names: Array[String] = []
+	if is_nearby:
+		for sub_name_value: Variant in (other.get("nearby", []) as Array):
+			var sub_name := String(sub_name_value)
+			if sub_name != other_name and not sub_nearby_names.has(sub_name):
+				sub_nearby_names.append(sub_name)
+		if sub_nearby_names.size() > 6:
+			sub_nearby_names = sub_nearby_names.slice(0, 6)
+	var service_wait := _agent_active_service_for_resident(other_id)
+	var current_action_kind_label := ""
+	match action_type:
+		"去":
+			var target_id := String(action.get("place", "")) if action.get("place") is String else ""
+			var display := target_id if not target_id.is_empty() else "路途中"
+			current_action_kind_label = "前往%s" % display
+		"待着":
+			if not service_wait.is_empty():
+				current_action_kind_label = "等待%s" % String(service_wait.get("kind", "服务"))
+			else:
+				current_action_kind_label = "待着"
+		"做活动":
+			current_action_kind_label = "做活动"
+		"搭话":
+			current_action_kind_label = "发起搭话"
+		"答话":
+			current_action_kind_label = "回应搭话"
+		"用道具":
+			current_action_kind_label = "使用道具"
+		_:
+			current_action_kind_label = action_type if not action_type.is_empty() else ""
+	return {
+		"resident_id": other_id,
+		"name": other_name,
+		"doing": String(other.get("doing", "")),
+		"available_for_conversation": active_conv.is_empty(),
+		"current_place": String(other.get("currentPlace", "")),
+		"job": String(social_state.get("job", "")),
+		"workplace": String(social_state.get("workplace", "")),
+		"is_waiting_service": service_wait,
+		"is_in_transit": action_type == "去",
+		"current_action_kind": action_type,
+		"current_action_summary": current_action_kind_label,
+		"elapsed_minutes": duration,
+		"estimated_free_in_minutes": remaining,
+		"nearby_of_nearby": sub_nearby_names,
+		"active_conversation_with": conv_partner_name,
+	}
+
+
 func _priority_onsite_service_task_for_resident(
 	resident_id: String,
 ) -> Dictionary:
@@ -15096,7 +15382,7 @@ func _priority_onsite_service_task_for_resident(
 	for projected_task: Dictionary in get_work_tasks_for_resident(
 		resident_id,
 	):
-		var task := _work_tasks.task(String(projected_task.get("task_id", "")),) as Dictionary
+		var task := _work_tasks.task(String(projected_task.get("task_id", "")), ) as Dictionary
 		if (
 			task.is_empty()
 			or String(task.get("assignedResidentId", "")) != resident_id
@@ -15104,7 +15390,7 @@ func _priority_onsite_service_task_for_resident(
 			not in ["accepted", "in_progress", "waiting"]
 		):
 			continue
-		var request := _occupation_services.request(String(task.get("sourceRef", "")),) as Dictionary
+		var request := _occupation_services.request(String(task.get("sourceRef", "")), ) as Dictionary
 		if (
 			request.is_empty()
 			and String(task.get("capability", "")) == "food.production"
@@ -15163,7 +15449,7 @@ func _conversation_follow_up_options(
 	resident: Dictionary,
 	events: Array,
 ) -> Array[Dictionary]:
-	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_id)
+	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_id)
 	if (
 		conversation.is_empty()
 		or String(conversation.get("waitingFor", "")) != resident_id
@@ -15176,7 +15462,7 @@ func _conversation_follow_up_options(
 	):
 		return []
 	var options: Array[Dictionary] = []
-	var partner_ref := CONVERSATION_RUNTIME._other_conversation_participant(self, 
+	var partner_ref := CONVERSATION_RUNTIME._other_conversation_participant(self ,
 		conversation,
 		resident_id,
 	)
@@ -15291,7 +15577,7 @@ func _conversation_requested_place_ids(
 	conversation: Dictionary,
 	responding_resident_id: String,
 ) -> Array[String]:
-	return ACTION_SUPPORT.conversation_requested_place_ids(self, conversation, responding_resident_id)
+	return ACTION_SUPPORT.conversation_requested_place_ids(self , conversation, responding_resident_id)
 
 
 func _inflight_allows_conversation_reply(
@@ -15315,7 +15601,7 @@ func _unified_conversation_follow_up_options(
 		context_ref,
 		legacy_options,
 		"promisor",
-		0,) as Dictionary
+		0, ) as Dictionary
 	if adapted.get("ok") != true:
 		return []
 	var candidates := (
@@ -15325,7 +15611,7 @@ func _unified_conversation_follow_up_options(
 		context_ref,
 		candidates,
 		int(_environment.get_absolute_minute()),
-		maxi(candidates.size(), 1),) as Dictionary
+		maxi(candidates.size(), 1), ) as Dictionary
 	if queried.get("ok") != true:
 		return []
 	var result: Array[Dictionary] = []
@@ -15358,7 +15644,7 @@ func _agent_conflict_snapshot(
 			"medical_follow_up": {},
 		}
 	var snapshot := _conflict_agent_world_bridge.snapshot_for_actor(resident_id,
-		nearby_ids,) as Dictionary
+		nearby_ids, ) as Dictionary
 	snapshot["conflict_tension_options"] = _decorate_conflict_tension_options(
 		resident_id,
 		resident,
@@ -15498,7 +15784,7 @@ func _decorate_conflict_tension_options(
 			projected["kind"] = "attack"
 			projected["tension_id"] = ""
 		elif (
-			not CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_id).is_empty()
+			not CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_id).is_empty()
 			and not _resident_profile_conflict_motive(resident, target_id).is_empty()
 		):
 			# 对话仍在进行时，真实事件先保留质问入口；若居民自身公开人设
@@ -15515,8 +15801,8 @@ func _decorate_conflict_tension_options(
 			profile_attack["source_conversation_id"] = ""
 			profile_attack["meaning"] = (
 				"这是本人公开人设形成的攻击倾向。想打就打，不需要对方先动手；"
-				+ "动手时台词和动作描述必须符合本人身份与说话方式，让旁观者看得出"
-				+ "“这就是他会做的事”。人设依据：%s"
+				+"动手时台词和动作描述必须符合本人身份与说话方式，让旁观者看得出"
+				+"“这就是他会做的事”。人设依据：%s"
 				% String(profile_cause.get("summary", ""))
 			)
 			result.append(profile_attack)
@@ -15531,8 +15817,8 @@ func _decorate_conflict_tension_options(
 		if String(cause.get("sourceKind", "")) == "resident_profile_motive":
 			projected["meaning"] = (
 				"这是本人公开人设形成的攻击倾向。想打就打，不需要对方先动手；"
-				+ "动手时台词和动作描述必须符合本人身份与说话方式，让旁观者看得出"
-				+ "“这就是他会做的事”。人设依据：%s"
+				+"动手时台词和动作描述必须符合本人身份与说话方式，让旁观者看得出"
+				+"“这就是他会做的事”。人设依据：%s"
 				% String(cause.get("summary", ""))
 			)
 		else:
@@ -16447,7 +16733,7 @@ func _emit_activity_lifecycle(
 	elif lifecycle in ["completed", "interrupted", "failed"]:
 		if lifecycle == "completed":
 			WORK_SETTLEMENT.settle_completed_activity(
-				self,
+				self ,
 				resident_id,
 				execution,
 			)
@@ -16906,12 +17192,12 @@ func _enqueue_world_event(
 	):
 		_interrupt_action(resident_name, "刚刚遭遇冲突，当前行动中止")
 		var active_conversation := CONVERSATION_RUNTIME._active_conversation_for_person(
-			self,
+			self ,
 			resident_name,
 		)
 		if not active_conversation.is_empty():
 			CONVERSATION_RUNTIME._end_conversation(
-				self,
+				self ,
 				String(active_conversation.get("conversationId", "")),
 				"一方离开",
 				"interrupted",
@@ -16959,11 +17245,11 @@ func _queue_event_for_person(
 
 
 func _direct_connection_endpoint(current_place: String, target_place: String) -> Dictionary:
-	return ACTION_SUPPORT.direct_connection_endpoint(self, current_place, target_place)
+	return ACTION_SUPPORT.direct_connection_endpoint(self , current_place, target_place)
 
 
 func _outdoor_connection_place_for(place_name: String) -> String:
-	return ACTION_SUPPORT.outdoor_connection_place_for(self, place_name)
+	return ACTION_SUPPORT.outdoor_connection_place_for(self , place_name)
 
 
 func _apply_player_avatar_state(
@@ -16992,7 +17278,7 @@ func _apply_player_avatar_state(
 	)
 	if semantic_state_changed:
 		_bump_world_revision(false)
-	var perception_changed := PERCEPTION_RUNTIME._refresh_player_avatar_perception(self, 
+	var perception_changed := PERCEPTION_RUNTIME._refresh_player_avatar_perception(self ,
 		true,
 		not semantic_state_changed,
 	)
@@ -17243,7 +17529,7 @@ func _agent_available_activities(resident: Dictionary) -> Array:
 			if not occupation_id.is_empty():
 				var tasks := _work_tasks.tasks_for_activity(occupation_id,
 					activity_id,
-					resident_id,) as Array
+					resident_id, ) as Array
 				for task_value: Variant in _available_work_tasks(tasks):
 					if not task_value is Dictionary:
 						continue
@@ -17297,7 +17583,7 @@ func _prop_query_data() -> Dictionary:
 
 
 func _default_doing(action: Dictionary) -> String:
-	return ACTION_PROJECTION_MODULE.default_doing(self, action)
+	return ACTION_PROJECTION_MODULE.default_doing(self , action)
 
 
 func _point_along_polyline(points: Array[Vector2], ratio: float) -> Vector2:
@@ -17305,7 +17591,7 @@ func _point_along_polyline(points: Array[Vector2], ratio: float) -> Vector2:
 
 
 func _prop_approach_duration_minutes(action: Dictionary) -> int:
-	return ACTION_SUPPORT.prop_approach_duration_minutes(self, action)
+	return ACTION_SUPPORT.prop_approach_duration_minutes(self , action)
 
 
 func _reverse_polyline_to_ratio(points: Array[Vector2], ratio: float) -> Array[Vector2]:
@@ -17412,9 +17698,9 @@ func _advance_passive_activity_needs(absolute_minute: int) -> void:
 			continue
 		var nearby := resident.get("nearby", []) as Array
 		var effects := {
-			"energy": -2,
-			"satiety": -3,
-			"socialNeed": -1 if not nearby.is_empty() else 2,
+			"energy": - 2,
+			"satiety": - 3,
+			"socialNeed": - 1 if not nearby.is_empty() else 2,
 			"solitudeNeed": 2 if not nearby.is_empty() else -1,
 		}
 		var previous := (
@@ -17810,7 +18096,7 @@ func _record_social_assignment_result(
 	) as Dictionary
 	if result.get("ok") != true:
 		return
-	var matter := _social_matters.get_matter(matter_id,) as Dictionary
+	var matter := _social_matters.get_matter(matter_id, ) as Dictionary
 	var source_ref := (
 		matter.get("source_state_ref", {}) as Dictionary
 	)
@@ -17842,7 +18128,7 @@ func _record_social_assignment_result(
 			"social.resolve.cancelled",
 			"commitment_failed",
 			[result_ref],
-			int(_environment.get_absolute_minute()),)
+			int(_environment.get_absolute_minute()), )
 	_emit_social_matter_summary(matter_id)
 
 
@@ -17974,7 +18260,7 @@ func _resident_social_available_at(
 	resident_id: String,
 	now: int,
 ) -> int:
-	return SOCIAL_JUDGMENTS.resident_social_available_at(self, resident_id, now)
+	return SOCIAL_JUDGMENTS.resident_social_available_at(self , resident_id, now)
 
 
 func _social_goal_matches_action(
@@ -19190,7 +19476,7 @@ func _world_data_has_activity_at_place(
 	activity_id: String,
 	place_id: String,
 ) -> bool:
-	return ACTION_SUPPORT.world_data_has_activity_at_place(self, world_data, activity_id, place_id)
+	return ACTION_SUPPORT.world_data_has_activity_at_place(self , world_data, activity_id, place_id)
 
 
 func _advance_conflict_runtime() -> void:
@@ -19209,7 +19495,7 @@ func _connect_conflict_controller_signals() -> void:
 		["conflict_event_created", "_on_conflict_event_created"],
 		["conflict_follow_up_required", "_on_conflict_follow_up_required"],
 	]:
-		var callback := Callable(self, String(binding[1]))
+		var callback := Callable(self , String(binding[1]))
 		if not _conflict_controller.is_connected(String(binding[0]), callback):
 			_conflict_controller.connect(String(binding[0]), callback)
 
@@ -19222,7 +19508,7 @@ func _disconnect_conflict_controller_signals() -> void:
 		["conflict_event_created", "_on_conflict_event_created"],
 		["conflict_follow_up_required", "_on_conflict_follow_up_required"],
 	]:
-		var callback := Callable(self, String(binding[1]))
+		var callback := Callable(self , String(binding[1]))
 		if _conflict_controller.is_connected(String(binding[0]), callback):
 			_conflict_controller.disconnect(String(binding[0]), callback)
 
@@ -19470,7 +19756,7 @@ func _ensure_resident_sleep_started(
 	var action_id := String(action.get("action_id", "")).strip_edges()
 	if action_id.is_empty():
 		return false
-	var active := _resident_sleep.get_active_sleep(resident_id,) as Dictionary
+	var active := _resident_sleep.get_active_sleep(resident_id, ) as Dictionary
 	if not active.is_empty():
 		return false
 	var sleep_started_at := int(action.get("startedAbsoluteMinute", 0)) + (
@@ -19479,7 +19765,7 @@ func _ensure_resident_sleep_started(
 	_resident_sleep.start_sleep(resident_id,
 		action_id,
 		sleep_started_at,
-		maxi(1, int(action.get("durationMinutes", 0))),)
+		maxi(1, int(action.get("durationMinutes", 0))), )
 	return true
 
 
@@ -19500,19 +19786,19 @@ func _settle_resident_activity_condition(
 	var activity_id := String(execution.get("activityId", ""))
 	var condition_result: Dictionary = {}
 	if activity_id == "activity_home_sleep":
-		var active_sleep := _resident_sleep.get_active_sleep(resident_id,) as Dictionary
+		var active_sleep := _resident_sleep.get_active_sleep(resident_id, ) as Dictionary
 		if active_sleep.is_empty():
 			return
 		var sleep_finish := _resident_sleep.finish_sleep(resident_id,
 			action_id,
 			occurred_at,
 			status != "completed",
-			reason if not reason.strip_edges().is_empty() else status,) as Dictionary
+			reason if not reason.strip_edges().is_empty() else status, ) as Dictionary
 		if sleep_finish.get("ok") != true:
 			return
 		condition_result = _resident_conditions.submit_sleep_result(resident_id,
 			sleep_finish.get("sleepResult", {}) as Dictionary,
-			_resident_condition_life_state(resident),) as Dictionary
+			_resident_condition_life_state(resident), ) as Dictionary
 	else:
 		var performing_started_at := int(
 			action.get("startedAbsoluteMinute", occurred_at),
@@ -19530,7 +19816,7 @@ func _settle_resident_activity_condition(
 				"weather": get_weather(),
 				"outdoors": String(resident.get("spaceId", "")) == "town_outdoor",
 			},
-			_resident_condition_life_state(resident),) as Dictionary
+			_resident_condition_life_state(resident), ) as Dictionary
 	_record_resident_condition_result(resident_id, condition_result)
 
 
@@ -19583,7 +19869,7 @@ func _settle_resident_route_condition(
 				"outdoors": was_outdoors,
 			},
 		},
-		_resident_condition_life_state(resident),) as Dictionary
+		_resident_condition_life_state(resident), ) as Dictionary
 	_record_resident_condition_result(resident_id, result)
 
 
@@ -19677,7 +19963,7 @@ func _clinic_interview_projection_for_participant(
 	conversation: Dictionary,
 	participant_resident_id: String,
 ) -> Variant:
-	var linked := CONVERSATION_RUNTIME._clinic_interview_for_conversation(self, conversation)
+	var linked := CONVERSATION_RUNTIME._clinic_interview_for_conversation(self , conversation)
 	if linked.is_empty():
 		return null
 	var interview := linked.get("context", {}) as Dictionary
@@ -19689,7 +19975,7 @@ func _clinic_interview_projection_for_participant(
 	)
 	return (
 		_clinic_interviews.projection_for_role(interview,
-			role,) as Dictionary
+			role, ) as Dictionary
 	).duplicate(true)
 
 
@@ -19702,7 +19988,7 @@ func _record_clinic_interview_response(
 	var response_value: Variant = action.get("medical_response")
 	if response_value == null or not response_value is Dictionary:
 		return
-	var linked := CONVERSATION_RUNTIME._clinic_interview_for_conversation(self, conversation)
+	var linked := CONVERSATION_RUNTIME._clinic_interview_for_conversation(self , conversation)
 	if linked.is_empty():
 		return
 	var interview := linked.get("context", {}) as Dictionary
@@ -19712,12 +19998,12 @@ func _record_clinic_interview_response(
 	var recorded := _clinic_interviews.record_patient_response(interview,
 		String(conversation.get("conversationId", "")),
 		String(response.get("response_kind", "")),
-		turn_id,) as Dictionary
+		turn_id, ) as Dictionary
 	if recorded.get("ok") != true:
 		return
 	var request := linked.get("request", {}) as Dictionary
 	_occupation_services.merge_request_context(String(request.get("requestId", "")),
-		{"medicalInterview": recorded.get("context", {})},)
+		{"medicalInterview": recorded.get("context", {})}, )
 	_bump_world_revision(false)
 
 
@@ -19735,7 +20021,7 @@ func _advance_resident_conditions(absolute_minute: int) -> void:
 		if not _resident_is_present(resident):
 			continue
 		var outdoors := String(resident.get("spaceId", "")) == "town_outdoor"
-		var active := _resident_conditions.get_active_exposure(resident_id,) as Dictionary
+		var active := _resident_conditions.get_active_exposure(resident_id, ) as Dictionary
 		var active_facts := active.get("facts", {}) as Dictionary
 		var exposure_still_matches := (
 			not active.is_empty()
@@ -19745,7 +20031,7 @@ func _advance_resident_conditions(absolute_minute: int) -> void:
 		)
 		if not active.is_empty() and not exposure_still_matches:
 			_resident_conditions.end_ambient_exposure(resident_id,
-				String(active.get("exposureId", "")),)
+				String(active.get("exposureId", "")), )
 			active = {}
 		if active.is_empty() and outdoors and weather_is_exposure:
 			var started := _resident_conditions.begin_world_weather_exposure(resident_id,
@@ -19764,9 +20050,9 @@ func _advance_resident_conditions(absolute_minute: int) -> void:
 					"outdoors": true,
 					"placeId": String(resident.get("currentPlace", "")),
 					"riskTags": ["weather_exposure"],
-				},) as Dictionary
+				}, ) as Dictionary
 			if started.get("ok") == true:
-				active = _resident_conditions.get_active_exposure(resident_id,) as Dictionary
+				active = _resident_conditions.get_active_exposure(resident_id, ) as Dictionary
 		var context := {
 			"riskTags": (
 				(active.get("riskTags", []) as Array).duplicate()
@@ -19778,7 +20064,7 @@ func _advance_resident_conditions(absolute_minute: int) -> void:
 		}
 		var advanced := _resident_conditions.advance_resident(resident_id,
 			absolute_minute,
-			context,) as Dictionary
+			context, ) as Dictionary
 		if (
 			advanced.get("ok") == true
 			and not (advanced.get("events", []) as Array).is_empty()
@@ -19797,7 +20083,7 @@ func _clinic_request_needs_basic_care(
 	var requested_ids: Array = request_context.get("conditionIds", []) as Array
 	if requested_ids.is_empty():
 		return false
-	for condition_value: Variant in _resident_conditions.get_conditions(patient_resident_id,) as Array:
+	for condition_value: Variant in _resident_conditions.get_conditions(patient_resident_id, ) as Array:
 		if not condition_value is Dictionary:
 			continue
 		var condition := condition_value as Dictionary
@@ -19806,7 +20092,7 @@ func _clinic_request_needs_basic_care(
 			requested_ids.has(condition_id)
 			and bool(_resident_conditions.condition_accepts_relief(patient_resident_id,
 				condition_id,
-				"basic_care",))
+				"basic_care", ))
 		):
 			return true
 	return false
@@ -19843,7 +20129,7 @@ func _validate_medical_response_for_world(
 		or String(response.get("response_kind", "")).strip_edges().is_empty()
 	):
 		return "medical_response 缺少合法的请求编号或回应类型"
-	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self, resident_id)
+	var conversation := CONVERSATION_RUNTIME._active_conversation_for_person(self , resident_id)
 	var medical: Dictionary = _clinic_interview_projection_for_participant(
 		conversation,
 		resident_id,
@@ -19910,7 +20196,7 @@ func _apply_clinic_visitor_activity_availability(
 			{},
 		) as Dictionary
 	)
-	var task := _work_tasks.task(String(request.get("taskId", "")),) as Dictionary
+	var task := _work_tasks.task(String(request.get("taskId", "")), ) as Dictionary
 	if (
 		String(interview.get("status", "")) != "completed"
 		or String(task.get("processStage", ""))
@@ -20021,7 +20307,7 @@ func _resident_is_completing_bound_clinic_work(
 	if action.is_empty():
 		return false
 	var execution := _activity_runtime.execution_for_action(resident_id,
-		String(action.get("action_id", "")),) as Dictionary
+		String(action.get("action_id", "")), ) as Dictionary
 	if String(execution.get("activityId", "")) not in [
 		"activity_clinic_receive_patient",
 		"activity_clinic_prepare_medicine",
@@ -20029,7 +20315,7 @@ func _resident_is_completing_bound_clinic_work(
 		return false
 	for occupation_id: String in _work_occupation_ids_for_resident(resident_id):
 		for task_value: Variant in _work_tasks.tasks_for_occupation(occupation_id,
-			resident_id,) as Array:
+			resident_id, ) as Array:
 			var task := task_value as Dictionary
 			if (
 				String(task.get("assignedResidentId", "")) == resident_id
@@ -20063,7 +20349,7 @@ func _begin_customer_service_wait(
 ) -> void:
 	if String(context.get("customerServiceMode", "")) != "onsite_wait":
 		return
-	var request := _occupation_services.request(request_id,) as Dictionary
+	var request := _occupation_services.request(request_id, ) as Dictionary
 	if String(request.get("state", "")) not in ["pending", "waiting"]:
 		return
 	var resident := _residents.get(resident_id, {}) as Dictionary
@@ -20199,7 +20485,7 @@ func _sync_occupation_service_presence(absolute_minute: int) -> void:
 				context.get("onsiteWaitUntilMinute", -1),
 			):
 				_occupation_services.merge_request_context(request_id,
-					{"onsiteWaitUntilMinute": extended_wait_until},)
+					{"onsiteWaitUntilMinute": extended_wait_until}, )
 				context["onsiteWaitUntilMinute"] = extended_wait_until
 		if (
 			_occupation_service_wait_deadline_applies(request)
@@ -20213,7 +20499,7 @@ func _sync_occupation_service_presence(absolute_minute: int) -> void:
 			if int(context.get("customerAbsentSinceMinute", -1)) >= 0:
 				_occupation_services.merge_request_context(
 					request_id,
-					{"customerAbsentSinceMinute": -1},
+					{"customerAbsentSinceMinute": - 1},
 				)
 			if (
 				String(request.get("state", "")) == "waiting"
@@ -20239,11 +20525,11 @@ func _resident_is_heading_to_service_request(
 	resident_id: String,
 	request: Dictionary,
 ) -> bool:
-	return ACTION_SUPPORT.resident_is_heading_to_service_request(self, resident_id, request)
+	return ACTION_SUPPORT.resident_is_heading_to_service_request(self , resident_id, request)
 
 
 func _onsite_service_queue_is_advancing(request: Dictionary) -> bool:
-	var task := _work_tasks.task(String(request.get("taskId", "")),) as Dictionary
+	var task := _work_tasks.task(String(request.get("taskId", "")), ) as Dictionary
 	var assigned_resident_id := String(
 		task.get("assignedResidentId", ""),
 	)
@@ -20265,7 +20551,7 @@ func _onsite_service_queue_is_advancing(request: Dictionary) -> bool:
 		):
 			continue
 		var active_task := _work_tasks.task(task_id) as Dictionary
-		var active_request := _occupation_services.request(String(active_task.get("sourceRef", "")),) as Dictionary
+		var active_request := _occupation_services.request(String(active_task.get("sourceRef", "")), ) as Dictionary
 		if (
 			String(active_request.get("placeId", "")) == place_id
 			and String(
@@ -20383,7 +20669,7 @@ func _clinic_request_has_executable_practitioner(
 ) -> bool:
 	if not _clinic_has_executable_practitioner():
 		return false
-	var task := _work_tasks.task(String(request.get("taskId", "")),) as Dictionary
+	var task := _work_tasks.task(String(request.get("taskId", "")), ) as Dictionary
 	var assigned_id := String(task.get("assignedResidentId", ""))
 	if assigned_id.is_empty():
 		return true
@@ -20398,7 +20684,7 @@ func _clinic_request_has_executable_practitioner(
 
 
 func _schedule_occupation_service_worker(request: Dictionary) -> void:
-	var task := _work_tasks.task(String(request.get("taskId", "")),) as Dictionary
+	var task := _work_tasks.task(String(request.get("taskId", "")), ) as Dictionary
 	var can_interrupt := _task_allows_current_activity_interrupt(task)
 	var assigned_resident_id := String(
 		task.get("assignedResidentId", ""),
@@ -20479,7 +20765,7 @@ func _cancel_occupation_service_request(
 			{},
 		) as Dictionary
 		if String(medical_conversation.get("status", "")) == "active":
-			CONVERSATION_RUNTIME._end_conversation(self, 
+			CONVERSATION_RUNTIME._end_conversation(self ,
 				medical_conversation_id,
 				"无法继续",
 				"interrupted",
@@ -20709,7 +20995,7 @@ func _close_resident_request_source(
 			int(source_ref.get("source_revision", 1)) + 1,
 			false,
 			now,
-			[{"result_id": result_id}],
+			[ {"result_id": result_id}],
 		) as Dictionary
 		if closed.get("ok") == true:
 			_finalize_social_mutation(
@@ -20772,12 +21058,12 @@ func _settle_clinic_condition_result(
 		},
 		_resident_condition_life_state(
 			_residents.get(patient_id, {}) as Dictionary,
-		),) as Dictionary
+		), ) as Dictionary
 	_record_resident_condition_result(patient_id, result)
 
 
 func _clinic_condition_request_context(resident_id: String) -> Dictionary:
-	var conditions := _resident_conditions.get_conditions(resident_id,) as Array
+	var conditions := _resident_conditions.get_conditions(resident_id, ) as Array
 	var condition_ids: Array[String] = []
 	var labels: Array[String] = []
 	for condition_value: Variant in conditions:
@@ -20870,7 +21156,7 @@ func _maybe_notify_ready_preorder(
 	var request_id := String(request.get("requestId", ""))
 	var source_ref := "preorder:%s" % request_id
 	var sender_id := RESIDENT_MESSAGE_POLICY.sender_for_source(
-		self,
+		self ,
 		String(definition.get("occupationId", "")),
 		source_ref,
 		String(request.get("requesterResidentId", "")),
@@ -20880,7 +21166,7 @@ func _maybe_notify_ready_preorder(
 	if sender_id.is_empty() or requester_id.is_empty():
 		return
 	var message_result := RESIDENT_MESSAGE_POLICY.send(
-		self,
+		self ,
 		RESIDENT_MESSAGE_CONTENT.preorder_ready(
 			sender_id,
 			requester_id,
@@ -20928,7 +21214,7 @@ func _notify_repair_ready(
 	var request_id := String(request.get("requestId", ""))
 	var requester_id := String(request.get("requesterResidentId", ""))
 	var message_result := RESIDENT_MESSAGE_POLICY.send(
-		self,
+		self ,
 		RESIDENT_MESSAGE_CONTENT.repair_ready(
 			worker_resident_id,
 			requester_id,
@@ -21002,7 +21288,7 @@ func _install_conversation_follow_up_action(
 	)
 	resident_action_phase_changed.emit(
 		resident_id,
-		ACTION_PRESENTATION._resident_action_phase_projection(self, resident),
+		ACTION_PRESENTATION._resident_action_phase_projection(self , resident),
 	)
 
 
@@ -21074,7 +21360,7 @@ func _available_work_tasks(tasks: Array) -> Array:
 
 
 func _public_work_task_targets(targets: Array) -> Array[Dictionary]:
-	return ACTION_SUPPORT.public_work_task_targets(self, targets)
+	return ACTION_SUPPORT.public_work_task_targets(self , targets)
 
 
 func _occupation_service_request_exists(
@@ -21253,7 +21539,7 @@ func _sync_daily_operation_tasks(absolute_minute: int) -> void:
 				operation.get("sourceKind", "daily_operation_plan"),
 			),
 			"sourceRef": source_ref,
-			"targets": [{
+			"targets": [ {
 				"kind": String(operation.get("targetKind", "prop")),
 				"ref": String(operation.get("target", "")),
 			}],
@@ -21300,7 +21586,7 @@ func _sync_library_catalog_tasks(absolute_minute: int) -> void:
 		"capability": "library.assist",
 		"sourceKind": "daily_catalog_plan",
 		"sourceRef": source_ref,
-		"targets": [{"kind": "prop", "ref": "图书馆借还书柜台内侧"}],
+		"targets": [ {"kind": "prop", "ref": "图书馆借还书柜台内侧"}],
 		"requestedResultKind": "catalog_state_change",
 		"createdAtMinute": absolute_minute,
 		"priority": CONTENT_CATALOG.TASK_PRIORITY["library_catalog_check"],
@@ -21383,7 +21669,7 @@ func _sync_civic_work_tasks(absolute_minute: int) -> void:
 		"capability": "civic.service",
 		"sourceKind": "public_matter",
 		"sourceRef": daily_source_ref,
-		"targets": [{"kind": "prop", "ref": "镇公所档案柜"}],
+		"targets": [ {"kind": "prop", "ref": "镇公所档案柜"}],
 		"requestedResultKind": "civic_case_update",
 		"createdAtMinute": absolute_minute,
 		"priority": CONTENT_CATALOG.TASK_PRIORITY["civic_case"],
@@ -21402,7 +21688,7 @@ func _sync_civic_work_tasks(absolute_minute: int) -> void:
 			"capability": "staffing.coordinate",
 			"sourceKind": "staffing_matter",
 			"sourceRef": "staffing-vacancies",
-			"targets": [{"kind": "prop", "ref": "镇公所档案柜"}],
+			"targets": [ {"kind": "prop", "ref": "镇公所档案柜"}],
 			"requestedResultKind": "staffing_matter_update",
 			"createdAtMinute": absolute_minute,
 			"priority": CONTENT_CATALOG.TASK_PRIORITY["staffing_review"],
@@ -21439,7 +21725,7 @@ func _sync_civic_work_tasks(absolute_minute: int) -> void:
 			"capability": "civic.service",
 			"sourceKind": "place_service_change",
 			"sourceRef": "place-service:%s" % place_id,
-			"targets": [{"kind": "prop", "ref": "镇公所档案柜"}],
+			"targets": [ {"kind": "prop", "ref": "镇公所档案柜"}],
 			"requestedResultKind": "civic_case_update",
 			"createdAtMinute": absolute_minute,
 			"priority": CONTENT_CATALOG.TASK_PRIORITY["civic_urgent_case"],
@@ -21639,7 +21925,7 @@ func _sync_warehouse_audit_tasks(absolute_minute: int) -> void:
 		"capability": "inventory.receive",
 		"sourceKind": "daily_inventory_plan",
 		"sourceRef": audit_source_ref,
-		"targets": [{"kind": "prop", "ref": "码头仓库货单桌"}],
+		"targets": [ {"kind": "prop", "ref": "码头仓库货单桌"}],
 		"requestedResultKind": "inventory_record",
 		"createdAtMinute": absolute_minute,
 		"priority": CONTENT_CATALOG.TASK_PRIORITY["warehouse_audit"],
@@ -21662,7 +21948,7 @@ func _sync_warehouse_audit_tasks(absolute_minute: int) -> void:
 			"capability": "inventory.receive",
 			"sourceKind": "inventory_discrepancy",
 			"sourceRef": lot_id,
-			"targets": [{"kind": "prop", "ref": "码头仓库货单桌"}],
+			"targets": [ {"kind": "prop", "ref": "码头仓库货单桌"}],
 			"requestedResultKind": "inventory_record",
 			"createdAtMinute": absolute_minute,
 			"priority": CONTENT_CATALOG.TASK_PRIORITY["inventory_discrepancy"],
@@ -21692,7 +21978,7 @@ func _sync_library_return_requests(absolute_minute: int) -> void:
 			continue
 		var source_ref := "library-return:%s" % loan_id
 		var librarian_id := RESIDENT_MESSAGE_POLICY.sender_for_source(
-			self,
+			self ,
 			"occupation_librarian",
 			source_ref,
 			borrower_id,
@@ -21700,7 +21986,7 @@ func _sync_library_return_requests(absolute_minute: int) -> void:
 		)
 		if not librarian_id.is_empty():
 			RESIDENT_MESSAGE_POLICY.send(
-				self,
+				self ,
 				RESIDENT_MESSAGE_CONTENT.library_due(
 					librarian_id,
 					borrower_id,
@@ -21988,7 +22274,7 @@ func _sync_specialty_service_demand(
 			"capability": "research.handoff",
 			"sourceKind": "personal_research_plan",
 			"sourceRef": "booklet-demand:%s" % request_id,
-			"targets": [{"kind": "prop", "ref": "图书馆写作桌"}],
+			"targets": [ {"kind": "prop", "ref": "图书馆写作桌"}],
 			"requestedResultKind": "handwritten_booklet",
 			"createdAtMinute": now,
 			"priority": CONTENT_CATALOG.TASK_PRIORITY["research_booklet_handoff"],
@@ -22014,7 +22300,7 @@ func _resident_is_on_leave(
 	resident: Dictionary,
 	absolute_minute := -1,
 ) -> bool:
-	return ACTION_SUPPORT.resident_is_on_leave(self, resident, absolute_minute)
+	return ACTION_SUPPORT.resident_is_on_leave(self , resident, absolute_minute)
 
 
 func _expire_specialty_inventory_before(
@@ -22086,7 +22372,7 @@ func _sync_clinic_follow_up_requests(absolute_minute: int) -> void:
 			continue
 		var source_ref := "clinic-follow-up:%s" % follow_up_id
 		var practitioner_id := RESIDENT_MESSAGE_POLICY.sender_for_source(
-			self,
+			self ,
 			"occupation_clinic_practitioner",
 			source_ref,
 			patient_id,
@@ -22097,7 +22383,7 @@ func _sync_clinic_follow_up_requests(absolute_minute: int) -> void:
 		)
 		if not practitioner_id.is_empty():
 			RESIDENT_MESSAGE_POLICY.send(
-				self,
+				self ,
 				RESIDENT_MESSAGE_CONTENT.clinic_follow_up(
 					practitioner_id,
 					patient_id,
@@ -22231,7 +22517,7 @@ func _activate_waiting_dining_orders() -> void:
 			request_id,
 			{
 				"onsiteWaitUntilMinute": wait_until,
-				"customerAbsentSinceMinute": -1,
+				"customerAbsentSinceMinute": - 1,
 			},
 		)
 		_begin_customer_service_wait(
@@ -22636,7 +22922,7 @@ func _ensure_postal_sort_task(batch_id: String, created_at: int) -> void:
 		"capability": "message.sort",
 		"sourceKind": "postal_batch",
 		"sourceRef": batch_id,
-		"targets": [{"kind": "route", "ref": "小镇道路"}],
+		"targets": [ {"kind": "route", "ref": "小镇道路"}],
 		"requestedResultKind": "message_batch_sorted",
 		"createdAtMinute": created_at,
 		"priority": CONTENT_CATALOG.TASK_PRIORITY["postal_sort"],
@@ -22651,7 +22937,7 @@ func _reserve_postal_delivery_tasks(batch_id: String) -> void:
 			or String(message.get("state", "")) != "pending"
 		):
 			continue
-		var task := _work_tasks.task(String(message.get("taskId", "")),) as Dictionary
+		var task := _work_tasks.task(String(message.get("taskId", "")), ) as Dictionary
 		_reserve_work_task(task, "occupation_postal_worker")
 
 
@@ -22961,7 +23247,7 @@ func _prepare_postal_talk_approach(
 			maxf(0.0, full_distance - stop_distance),
 		)
 		if not trimmed.is_empty():
-			var endpoint_membership := PERCEPTION_RUNTIME._membership(self, 
+			var endpoint_membership := PERCEPTION_RUNTIME._membership(self ,
 				resident_space,
 				trimmed[-1],
 			)

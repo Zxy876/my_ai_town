@@ -66,6 +66,7 @@ func _run() -> void:
 		return
 	var bindings := compiled.get("residentBindings", []) as Array[Dictionary]
 	var identities := _identities(bindings)
+	var u0_target_id := String(identities[0].get("residentId", ""))
 	var request_host := Node.new()
 	request_host.name = "SaveContinueRoundtripRequestHost"
 	root.add_child(request_host)
@@ -97,6 +98,14 @@ func _run() -> void:
 			"requestHost": request_host,
 			"useLiveModel": false,
 			"enablePlayerAvatar": false,
+			"experimentScenario": {
+				"scenarioId": "roundtrip-hospital-intention",
+				"episodeId": "common-root",
+				"u0Observations": [{
+					"targetResidentId": u0_target_id,
+					"text": "我建立诊所，是为了让每位来访者都能及时得到照料。",
+				}],
+			},
 		},
 		collector.collect,
 	) as Dictionary
@@ -113,6 +122,19 @@ func _run() -> void:
 		source_runtime.call("get_startup_result") as Dictionary,
 		"源小镇完成场景挂载",
 	)
+	var u0_audit := await _wait_for_u0_root_mapping(source_gateway)
+	_expect(
+		not u0_audit.is_empty(),
+		"U0 在第一次认知后形成可追溯根记忆映射；审计=%s" % [
+			source_gateway.call("get_runtime_observation_audit"),
+		],
+	)
+	_expect_equal(u0_audit.get("targetResidentId"), u0_target_id, "U0 只进入指定居民")
+	_expect(
+		String(u0_audit.get("rootMemoryId", "")).begins_with("memory-"),
+		"U0 审计记录真实正式记忆编号",
+	)
+	_expect_equal(u0_audit.get("status"), "perceived", "同步返回不会让 U0 状态倒退")
 	var source_world: RefCounted = source_runtime.call("get_world_runtime")
 	var source_agent: RefCounted = source_gateway.call("get_agent_save_participant")
 	var store: RefCounted = STORE.new()
@@ -144,6 +166,11 @@ func _run() -> void:
 		"enablePlayerAvatar": false,
 		"enableTestUi": false,
 	}
+	var experiment_capture := source_gateway.call("capture_experiment_state") as Dictionary
+	_expect_ok(experiment_capture, "实验状态可在联合保存前捕获")
+	session_config["experimentState"] = (
+		experiment_capture.get("experimentState", {}) as Dictionary
+	).duplicate(true)
 	var saved_time := source_world.call("get_time") as Dictionary
 	var saved := save_coordinator.call("save", {
 		"slotId": slot_id,
@@ -255,6 +282,20 @@ func _run() -> void:
 		context,
 		"恢复后居民存档上下文与世界修订一致",
 	)
+	var restored_experiment := restore_gateway.call(
+		"get_runtime_observation_audit",
+		String(u0_audit.get("observationId", "")),
+	) as Dictionary
+	_expect_equal(
+		restored_experiment.get("rootMemoryId"),
+		u0_audit.get("rootMemoryId"),
+		"恢复后 U0 仍指向同一根记忆节点",
+	)
+	_expect_equal(
+		(restored_experiment.get("rawText")),
+		u0_audit.get("rawText"),
+		"恢复后 U0 原始证据未被摘要覆盖",
+	)
 	_expect_equal(
 		(restored_runtime.call("get_runtime_state") as Dictionary).get("avatarMode"),
 		"observer",
@@ -269,12 +310,67 @@ func _run() -> void:
 		"town",
 		"恢复完成后正式小镇保持可见室外视图",
 	)
+	var next_global_intention := "下一版共同意图：诊所先分诊，再按轻重缓急安排照料。"
+	var continuation := restore_gateway.call(
+		"stage_global_intent_after_restore",
+		{
+			"text": next_global_intention,
+			"sessionId": session_id,
+			"sourceSaveRevision": 1,
+		},
+	) as Dictionary
+	_expect_ok(continuation, "恢复后可在同一小镇建立下一版共同意图")
+	_expect_equal(
+		((continuation.get("version", {}) as Dictionary).get(
+			"deliveries",
+		[]) as Array).size(),
+		identities.size(),
+		"下一版共同意图一次覆盖全部居民",
+	)
+	var continued_experiment := restore_gateway.call(
+		"capture_experiment_state",
+	) as Dictionary
+	_expect_ok(continued_experiment, "下一版共同意图可进入联合存档")
+	var continued_session_config := session_config.duplicate(true)
+	continued_session_config["mode"] = "continue"
+	continued_session_config["experimentState"] = (
+		continued_experiment.get("experimentState", {}) as Dictionary
+	).duplicate(true)
+	var continued_save := restore_coordinator.call("save", {
+		"slotId": slot_id,
+		"sessionId": session_id,
+		"residentIdentities": identities.duplicate(true),
+		"sessionConfig": continued_session_config,
+		"savedAt": Time.get_datetime_string_from_system(false, false),
+		"residentMessages": [],
+	}) as Dictionary
+	_expect_ok(continued_save, "下一版共同意图先形成新的完整存档修订")
+	var continued_context := continued_save.get("context", {}) as Dictionary
+	_expect_equal(
+		continued_context.get("save_revision"),
+		2,
+		"U0@v1 建立明确的新修订边界",
+	)
+	_expect_ok(
+		restore_gateway.call("dispatch_pending_global_intent") as Dictionary,
+		"新修订发布后再唤醒居民处理共同意图",
+	)
+	var latest_continued := restore_coordinator.call(
+		"discover_latest",
+		slot_id,
+	) as Dictionary
+	_expect_ok(latest_continued, "U0@v1 修订成为该小镇的最新存档")
+	_expect_equal(
+		(latest_continued.get("summary", {}) as Dictionary).get("saveRevision"),
+		2,
+		"重新加载时会从 U0@v1 的存档边界继续",
+	)
 
 	var cleanup_agent := restored_agent
 	restored_runtime.queue_free()
 	await _wait_frames(4)
 	_expect_ok(
-		cleanup_agent.call("delete_game", context) as Dictionary,
+		cleanup_agent.call("delete_game", continued_context) as Dictionary,
 		"闭环测试居民存档可清理",
 	)
 	_expect_ok(store.call("cleanup_test_root") as Dictionary, "闭环测试世界存档可清理")
@@ -326,6 +422,20 @@ func _read_json(path: String) -> Dictionary:
 func _wait_frames(count: int) -> void:
 	for _index in count:
 		await process_frame
+
+
+func _wait_for_u0_root_mapping(gateway: Node) -> Dictionary:
+	for _index in 240:
+		var audit := gateway.call("get_runtime_observation_audit") as Dictionary
+		for record_value: Variant in audit.get("records", []) as Array:
+			var record := record_value as Dictionary
+			if (
+				String(record.get("kind", "")) == "U0"
+				and not String(record.get("rootMemoryId", "")).is_empty()
+			):
+				return record.duplicate(true)
+		await process_frame
+	return {}
 
 
 func _expect_ok(result: Dictionary, message: String) -> void:

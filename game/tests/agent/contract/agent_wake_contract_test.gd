@@ -34,6 +34,28 @@ func _initialize() -> void:
 		[],
 		"世界自然产生的身体状况事件可以唤醒居民 Agent",
 	)
+	var observation_wake := valid.duplicate(true)
+	observation_wake["runtime_observations"] = [{
+		"observation_id": "observation-contract-1",
+		"text": "诊所候诊区有人连续两次离开队伍。",
+	}]
+	_expect_equal(
+		AgentContractScript.validate_wake_packet(observation_wake),
+		[],
+		"运行时观察以独立通道进入居民 Agent",
+	)
+	var leaked_control_metadata := observation_wake.duplicate(true)
+	leaked_control_metadata["runtime_observations"][0]["kind"] = "U0"
+	_expect_error_contains(
+		{
+			"ok": false,
+			"errors": AgentContractScript.validate_wake_packet(
+				leaked_control_metadata,
+			),
+		},
+		"kind 不是允许字段",
+		"U 分类不能泄露进居民侧唤醒包",
+	)
 	var cases: Array[Dictionary] = [
 		{"id": "not_object", "value": "wake", "error": "唤醒包必须是对象"},
 		{"id": "empty_decision_id", "value": _with(valid, ["decision_id"], ""), "error": "decision_id"},

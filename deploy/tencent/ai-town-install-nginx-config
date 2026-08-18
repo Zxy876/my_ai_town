@@ -1,0 +1,86 @@
+#!/bin/sh
+set -eu
+
+config=/opt/maieutic/nginx.conf
+compose=/opt/maieutic/docker-compose.yml
+backup_dir=/opt/maieutic/.deploy-backups
+
+[ "$(id -u)" -eq 0 ]
+test -s "$config"
+test -s "$compose"
+mkdir -p "$backup_dir"
+
+backup="$backup_dir/nginx.conf-pre-ai-town-cache-$(date +%Y%m%d-%H%M%S)"
+edited=$(mktemp /opt/maieutic/.nginx-ai-town-cache.XXXXXX)
+trap 'rm -f "$edited"' EXIT
+cp -p "$config" "$backup"
+
+FRESH_MAP='map $uri $ai_town_asset_cache_control {
+    default "public, max-age=3600";
+    "~^/ai-town/index\.[0-9a-f]{16}\.(pck|wasm)$" "public, max-age=31536000, immutable";
+    "~^/ai-town/index\.[0-9a-f]{16}\.audio\.worklet\.js$" "public, max-age=31536000, immutable";
+    "~^/ai-town/index\.[0-9a-f]{16}\.audio\.position\.worklet\.js$" "public, max-age=31536000, immutable";
+}'
+
+DYNAMIC_HEADER='add_header Cache-Control $ai_town_asset_cache_control always;'
+OLD_HEADER='add_header Cache-Control "public, max-age=3600" always;'
+ANCHOR_LINE='limit_conn_zone $binary_remote_addr zone=ai_town_deepseek_conn:10m;'
+
+AUDIO_HASH_MARKER='index\.[0-9a-f]{16}\.audio\.worklet\.js'
+POSITION_HASH_MARKER='index\.[0-9a-f]{16}\.audio\.position\.worklet\.js'
+
+if grep -Fq "$DYNAMIC_HEADER" "$backup" && \
+   grep -Fq "$AUDIO_HASH_MARKER" "$backup" && \
+   grep -Fq "$POSITION_HASH_MARKER" "$backup"; then
+	cp -p "$backup" "$edited"
+else
+	python3 - "$backup" "$edited" "$FRESH_MAP" "$ANCHOR_LINE" "$DYNAMIC_HEADER" "$OLD_HEADER" <<'PY'
+import sys, re
+src, dst, fresh_map, anchor, dynamic_hdr, old_hdr = sys.argv[1:7]
+with open(src, 'r') as f:
+    text = f.read()
+
+text = text.replace(old_hdr, dynamic_hdr)
+
+map_pattern = re.compile(r'^[ \t]*map[ \t]+\$uri[ \t]+\$ai_town_asset_cache_control[ \t]*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[ \t]*\n?', re.MULTILINE)
+new_text, n_subs = map_pattern.subn('', text, count=1)
+if n_subs == 0:
+    new_text = text
+
+anchor_re = re.compile(r'(^[ \t]*' + re.escape(anchor) + r'[ \t]*\n?)', re.MULTILINE)
+m = anchor_re.search(new_text)
+if m and (fresh_map.strip() not in new_text):
+    insert_at = m.end()
+    new_text = new_text[:insert_at] + '\n' + fresh_map + '\n' + new_text[insert_at:]
+
+with open(dst, 'w') as f:
+    f.write(new_text)
+PY
+fi
+
+cp -p "$edited" "$config"
+
+printf 'MAP_DEBUG_START\n'
+awk '
+	/^[[:space:]]*map[[:space:]]+\$uri[[:space:]]+\$ai_town_asset_cache_control[[:space:]]*\{/ { in_map = 1 }
+	in_map { print NR": "$0 }
+	in_map && /^[[:space:]]*\}[[:space:]]*$/ { exit }
+' "$config" || true
+printf 'MAP_DEBUG_END\n'
+
+printf 'CACHE_HEADER_DEBUG_START\n'
+grep -n 'Cache-Control' "$config" | head -20 || true
+printf 'CACHE_HEADER_DEBUG_END\n'
+
+docker compose -f "$compose" exec -T nginx nginx -t 2>&1 | head -5
+if ! docker compose -f "$compose" exec -T nginx nginx -t >/dev/null 2>&1; then
+	echo '--- nginx.conf edited (first 180 lines): ---' >&2
+	head -n 180 "$config" >&2 || true
+	echo '-------------------------------------------' >&2
+	cp -p "$backup" "$config"
+	docker compose -f "$compose" exec -T nginx nginx -t 2>&1 | head -5 >&2 || true
+	exit 1
+fi
+
+docker compose -f "$compose" exec -T nginx nginx -s reload
+printf 'AI_TOWN_NGINX_CACHE=installed\n'

@@ -3,6 +3,7 @@ extends "res://agent/model/OpenAICompatibleModelProvider.gd"
 
 
 const DEFAULT_ENDPOINT := "https://api.deepseek.com/chat/completions"
+const WEB_PROXY_ENDPOINT_PATH := "/api/deepseek/chat/completions"
 const V4_FLASH_MODEL := "deepseek-v4-flash"
 const V4_PRO_MODEL := "deepseek-v4-pro"
 const DEFAULT_MODEL := V4_FLASH_MODEL
@@ -33,7 +34,25 @@ func _transport_label() -> String:
 
 
 func _default_endpoint() -> String:
+	if OS.has_feature("web"):
+		var origin_value: Variant = JavaScriptBridge.eval(
+			"window.location.origin",
+			true,
+		)
+		var web_endpoint := _web_proxy_endpoint(String(origin_value))
+		if not web_endpoint.is_empty():
+			return web_endpoint
 	return DEFAULT_ENDPOINT
+
+
+func _web_proxy_endpoint(origin: String) -> String:
+	var normalized_origin := origin.strip_edges().trim_suffix("/")
+	if not (
+		normalized_origin.begins_with("https://")
+		or normalized_origin.begins_with("http://")
+	):
+		return ""
+	return "%s%s" % [normalized_origin, WEB_PROXY_ENDPOINT_PATH]
 
 
 func _default_model() -> String:

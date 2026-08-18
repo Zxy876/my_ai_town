@@ -4660,6 +4660,48 @@ func _test_startup_load_focus_stability() -> void:
 			rebuilt_second_action,
 			"存档后台刷新保留当前存档按钮焦点",
 		)
+	var continue_intents: Array[Dictionary] = []
+	screen.connect(
+		"intent_requested",
+		func(intent: StringName, payload: Dictionary) -> void:
+			continue_intents.append({
+				"intent": String(intent),
+				"payload": payload.duplicate(true),
+			}),
+	)
+	_expect(
+		bool(screen.call("debug_request_slot", "slot-a")),
+		"点击可继续存档先打开下一版共同意图入口",
+	)
+	var intention_backdrop := screen.find_child(
+		"ContinueIntentionBackdrop",
+		true,
+		false,
+	) as Control
+	_expect(
+		intention_backdrop != null and intention_backdrop.visible,
+		"加载存档页显示下一版共同意图文本框",
+	)
+	var next_intention := "下一版共同意图：先分诊，再安排照料。"
+	_expect(
+		bool(screen.call("debug_confirm_pending_slot", next_intention)),
+		"玩家可以带着下一版共同意图进入已有小镇",
+	)
+	_expect_equal(continue_intents.size(), 1, "加载意图只提交一次")
+	if not continue_intents.is_empty():
+		var submitted := continue_intents[0]
+		_expect_equal(
+			submitted.get("intent"),
+			"session.continue_slot",
+			"下一版共同意图沿用正式加载存档入口",
+		)
+		_expect_equal(
+			(submitted.get("payload", {}) as Dictionary).get(
+				"nextGlobalIntentionText",
+			),
+			next_intention,
+			"自然语言原文从玩家入口进入加载管线",
+		)
 	root.remove_child(screen)
 	screen.free()
 
@@ -5700,6 +5742,22 @@ func _scenario_game_flow_resident_model_assignment_route() -> void:
 		"assignment scope receives the confirmed 15-slot draft",
 	)
 	_expect_equal(host.get("_bootstrap"), null, "opening assignment does not start or persist")
+	var direct_initial_intention_entry: Button
+	for button_value: Node in page.find_children(
+		"InitialIntentionButton",
+		"Button",
+		true,
+		false,
+	):
+		var candidate := button_value as Button
+		if candidate != null and candidate.is_visible_in_tree():
+			direct_initial_intention_entry = candidate
+			break
+	_expect(
+		direct_initial_intention_entry != null
+		and not direct_initial_intention_entry.disabled,
+		"model assignment exposes initial intention before all models are assigned",
+	)
 
 	host.call(
 		"_on_resident_model_assignment_back_requested",
@@ -5875,6 +5933,106 @@ func _scenario_game_flow_resident_model_assignment_route() -> void:
 		settings.stop_before_persist = true
 		_expect_equal(host.get("_bootstrap"), null, "draft is not persisted before apply")
 		page.call("_open_completion_modal")
+		var initial_intention_button: Button
+		for button_value: Node in page.find_children(
+			"ModalInitialIntentionButton",
+			"Button",
+			true,
+			false,
+		):
+			var candidate := button_value as Button
+			if candidate != null and candidate.is_visible_in_tree():
+				initial_intention_button = candidate
+				break
+		_expect(
+			initial_intention_button != null and not initial_intention_button.disabled,
+			"new-game completion modal exposes the pre-world initial intention entry",
+		)
+		if initial_intention_button != null and not initial_intention_button.disabled:
+			initial_intention_button.pressed.emit()
+		await process_frame
+		var intention_backdrop := page.find_child(
+			"InitialIntentionModalBackdrop",
+			true,
+			false,
+		) as ColorRect
+		var intention_edit := page.find_child(
+			"InitialIntentionEdit",
+			true,
+			false,
+		) as TextEdit
+		var intention_save := page.find_child(
+			"InitialIntentionSaveButton",
+			true,
+			false,
+		) as Button
+		var web_input_bridge_script := load(
+			"res://ui/common/WebTextInputBridge.gd",
+		) as Script
+		_expect(web_input_bridge_script != null, "initial intention ships the Web text input bridge")
+		if web_input_bridge_script != null:
+			var scaled_rect := web_input_bridge_script.call(
+				"scaled_css_rect",
+				Rect2(100, 50, 400, 200),
+				Vector2(1280, 720),
+				Rect2(10, 20, 1920, 1080),
+			) as Rect2
+			_expect_equal(scaled_rect, Rect2(160, 95, 600, 300), "Web input follows canvas scaling")
+			var native_bridge: RefCounted = web_input_bridge_script.new()
+			_expect(
+				not bool(native_bridge.call("open", intention_edit, "测试中文", {})),
+				"non-Web runtime keeps the native TextEdit path",
+			)
+		_expect(
+			intention_backdrop != null and intention_backdrop.is_visible_in_tree(),
+			"initial intention form opens above the completion modal",
+		)
+		var initial_intention_resident_ids: Array[String] = []
+		for resident_value: Variant in (
+			(commit_view_model.get("data", {}) as Dictionary).get(
+				"residents",
+				[],
+			) as Array
+		):
+			initial_intention_resident_ids.append(String(
+				(resident_value as Dictionary).get("residentId", ""),
+			))
+		var initial_intention_text := (
+			"林岚和唐小满打算共同举办派对。林岚负责邀请居民，唐小满负责准备场地，"
+			+ "两人计划在晚上八点前汇合。"
+		)
+		if intention_edit != null:
+			intention_edit.text = initial_intention_text
+		if intention_save != null and not intention_save.disabled:
+			intention_save.pressed.emit()
+		await _wait_frames(2)
+		var staged_scenario := host.call("get_staged_experiment_scenario") as Dictionary
+		var staged_observations := staged_scenario.get("u0Observations", []) as Array
+		_expect_equal(
+			staged_observations.size(),
+			15,
+			"one natural-language intention initializes the whole confirmed town",
+		)
+		var staged_resident_ids: Array[String] = []
+		for staged_value: Variant in staged_observations:
+			var staged_observation := staged_value as Dictionary
+			staged_resident_ids.append(String(staged_observation.get("targetResidentId", "")))
+			_expect_equal(
+				staged_observation.get("text"),
+				initial_intention_text,
+				"each resident receives the player's same raw initial intention",
+			)
+		staged_resident_ids.sort()
+		initial_intention_resident_ids.sort()
+		_expect_equal(
+			staged_resident_ids,
+			initial_intention_resident_ids,
+			"staged U0 covers the whole confirmed resident roster",
+		)
+		_expect(
+			intention_backdrop != null and not intention_backdrop.visible,
+			"successful U0 staging returns to the existing completion modal",
+		)
 		var modal_start := page.find_child(
 			"ModalStartButton",
 			true,

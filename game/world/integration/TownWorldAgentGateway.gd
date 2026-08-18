@@ -13,6 +13,9 @@ const AGENT_SYSTEM := preload("res://agent/AgentSystem.gd")
 const PHOTO_STORE := preload(
 	"res://world/integration/TownConversationPhotoStore.gd"
 )
+const EXPERIMENT_SCENARIO_STATE := preload(
+	"res://world/integration/TownExperimentScenarioState.gd"
+)
 const REQUIRED_WORLD_METHODS: Array[String] = [
 	"is_running",
 	"get_resident_identity_snapshot",
@@ -82,6 +85,7 @@ var _frame_probe: GDScript = null
 var _frame_probe_checked := false
 var _agent_system: RefCounted = AGENT_SYSTEM.new()
 var _photo_store: RefCounted = PHOTO_STORE.new()
+var _runtime_observations: RefCounted = EXPERIMENT_SCENARIO_STATE.new()
 var _provider_service: Object
 var _request_host: Node
 var _session_config: Dictionary = {}
@@ -172,6 +176,7 @@ func configure_session(
 	_world = null
 	_session_active = false
 	_photo_store.clear()
+	_runtime_observations.reset()
 	var photo_storage := _photo_store.configure_session(slot_id,
 		session_id,) as Dictionary
 	if not bool(photo_storage.get("ok", false)):
@@ -195,6 +200,16 @@ func configure_session(
 	_resident_identities = (
 		identity_result.get("residents", []) as Array[Dictionary]
 	).duplicate(true)
+	var configured_resident_ids: Array[String] = []
+	for identity in _resident_identities:
+		configured_resident_ids.append(String(identity.get("residentId", "")))
+	configured_resident_ids.sort()
+	var experiment_configuration := _runtime_observations.configure_new_session(
+		{} if restore_pending else config.get("experimentScenario", {}),
+		configured_resident_ids,
+	) as Dictionary
+	if not bool(experiment_configuration.get("ok", false)):
+		return experiment_configuration
 	_bindings_by_id = (
 		binding_result.get("bindingsById", {}) as Dictionary
 	).duplicate(true)
@@ -347,6 +362,9 @@ func bind_world(world: RefCounted) -> Dictionary:
 	for identity in _resident_identities:
 		_connected_resident_ids.append(String(identity.get("residentId", "")))
 	_connected_resident_ids.sort()
+	var initial_conditions := _activate_initial_experiment_conditions()
+	if not bool(initial_conditions.get("ok", false)):
+		return initial_conditions
 	_session_active = true
 	_generation += 1
 	return {
@@ -365,6 +383,7 @@ func pump(max_requests := -1) -> int:
 			_frame_probe = load("res://world/presentation/ui/TownUiFrameProbe.gd")
 	if not _session_active or _world == null:
 		return 0
+	_request_pending_runtime_observation_wakes()
 	var probe_lap_usec := Time.get_ticks_usec() if _frame_probe != null else 0
 	var requests: Array[Dictionary]
 	if _world.has_method("take_pending_decision_envelopes_by_ids"):
@@ -1124,6 +1143,141 @@ func get_agent_save_participant() -> RefCounted:
 	return _agent_system
 
 
+func capture_experiment_state() -> Dictionary:
+	return _runtime_observations.capture_state() as Dictionary
+
+
+func stage_global_intent_after_restore(request: Dictionary) -> Dictionary:
+	if not _session_active or _world == null:
+		return _failure("AGENT_GATEWAY_SESSION_INACTIVE", false)
+	var prepared := request.duplicate(true)
+	var current_context := _agent_system.get_save_context() as Dictionary
+	prepared["sessionId"] = String(
+		prepared.get("sessionId", current_context.get("session_id", "")),
+	)
+	prepared["sourceSaveRevision"] = int(
+		prepared.get(
+			"sourceSaveRevision",
+			current_context.get("save_revision", 0),
+		),
+	)
+	var world_time: Dictionary = {}
+	if _world.has_method("get_time"):
+		world_time = (_world.get_time() as Dictionary).duplicate(true)
+	return _runtime_observations.append_global_intent_after_restore(
+		prepared,
+		_connected_resident_ids,
+		world_time,
+	) as Dictionary
+
+
+func dispatch_pending_global_intent() -> Dictionary:
+	if not _session_active or _world == null:
+		return _failure("AGENT_GATEWAY_SESSION_INACTIVE", false)
+	return _request_pending_runtime_observation_wakes()
+
+
+func queue_runtime_observation(request: Dictionary) -> Dictionary:
+	if not _session_active or _world == null:
+		return _failure("AGENT_GATEWAY_SESSION_INACTIVE", false)
+	if not _world.has_method("request_runtime_observation_wake"):
+		return _failure("WORLD_RUNTIME_OBSERVATION_WAKE_MISSING", false)
+	var prepared := request.duplicate(true)
+	if _world.has_method("get_time"):
+		prepared["createdWorldTime"] = (
+			_world.call("get_time") as Dictionary
+		).duplicate(true)
+	var queued := _runtime_observations.enqueue(
+		prepared,
+		_connected_resident_ids,
+	) as Dictionary
+	if not bool(queued.get("ok", false)):
+		return queued
+	var observation := queued.get("observation", {}) as Dictionary
+	if (
+		bool(queued.get("duplicate", false))
+		and String(observation.get("status", ""))
+		not in ["committed", "injected"]
+	):
+		var duplicate_result := queued.duplicate(true)
+		duplicate_result["wakeRequest"] = {
+			"ok": true,
+			"scheduled": false,
+			"duplicate": true,
+		}
+		return duplicate_result
+	var wake_request := _world.call(
+		"request_runtime_observation_wake",
+		String(observation.get("targetResidentId", "")),
+	) as Dictionary
+	var result := queued.duplicate(true)
+	result["wakeRequest"] = wake_request.duplicate(true)
+	if not bool(wake_request.get("ok", false)):
+		var error_code := String(
+			wake_request.get(
+				"errorCode",
+				"RUNTIME_OBSERVATION_WAKE_FAILED",
+			),
+		)
+		_runtime_observations.mark_failed(
+			String(observation.get("observationId", "")),
+			error_code,
+		)
+		result["ok"] = false
+		result["errorCode"] = error_code
+		result["retryable"] = bool(wake_request.get("retryable", false))
+	return result
+
+
+func _activate_initial_experiment_conditions() -> Dictionary:
+	var world_time: Dictionary = {}
+	if _world != null and _world.has_method("get_time"):
+		world_time = (_world.call("get_time") as Dictionary).duplicate(true)
+	var activated := _runtime_observations.activate_initial_conditions(
+		_connected_resident_ids,
+		world_time,
+	) as Dictionary
+	if not bool(activated.get("ok", false)):
+		return activated
+	var pending_residents: Array[String] = []
+	for resident_value: Variant in activated.get("pendingResidentIds", []) as Array:
+		pending_residents.append(String(resident_value))
+	if pending_residents.is_empty():
+		return activated
+	if not _world.has_method("request_runtime_observation_wake"):
+		return _failure("WORLD_RUNTIME_OBSERVATION_WAKE_MISSING", false)
+	for resident_id: String in pending_residents:
+		var wake_request := _world.call(
+			"request_runtime_observation_wake",
+			resident_id,
+		) as Dictionary
+		if not bool(wake_request.get("ok", false)):
+			var error_code := String(
+				wake_request.get(
+					"errorCode",
+					"RUNTIME_OBSERVATION_WAKE_FAILED",
+				),
+			)
+			# New-game residents may not be physically present yet. Their U0 stays
+			# queued and is attached to the first cognition scheduled on arrival.
+			if error_code == "RUNTIME_OBSERVATION_TARGET_UNAVAILABLE":
+				continue
+			_runtime_observations.mark_pending_failed(resident_id, error_code)
+			return _failure(error_code, bool(wake_request.get("retryable", false)))
+	return activated
+
+
+func get_runtime_observation_audit(observation_id := "") -> Dictionary:
+	return _runtime_observations.audit_snapshot(observation_id) as Dictionary
+
+
+func mark_runtime_observation_outcome(
+	observation_id: String,
+	outcome: String,
+) -> Dictionary:
+	return _runtime_observations.mark_outcome(observation_id, outcome) as Dictionary
+
+
 func prepare_departure_messages(
 	departure_id: String,
 	max_candidates: int,
@@ -1236,6 +1390,20 @@ func hydrate_agent_restore(
 	requested_ids.sort()
 	if requested_ids != expected_ids:
 		return _failure("SESSION_CONTINUE_IDENTITY_MISMATCH", false)
+	var experiment_state_value: Variant = session_config.get("experimentState")
+	var experiment_restore: Dictionary
+	if experiment_state_value == null:
+		experiment_restore = _runtime_observations.configure_new_session(
+			{},
+			requested_ids,
+		) as Dictionary
+	else:
+		experiment_restore = _runtime_observations.apply_state(
+			experiment_state_value,
+			requested_ids,
+		) as Dictionary
+	if not bool(experiment_restore.get("ok", false)):
+		return experiment_restore
 	for resident_id in requested_ids:
 		var initialization := _world.get_agent_initialization_by_id(resident_id,) as Dictionary
 		if initialization.is_empty():
@@ -1269,6 +1437,51 @@ func hydrate_agent_restore(
 	}
 
 
+func _record_runtime_observation_memory_mappings(
+	resident_id: String,
+	decision_id: String,
+	stored_observations: Array[Dictionary],
+) -> void:
+	# Lightweight Gateway test doubles predate the formal-memory lookup. The
+	# production AgentSystem always provides it; preserving the optional edge
+	# keeps transport tests focused on transport behavior.
+	if not _agent_system.has_method("find_resident_formal_memory_by_evidence_ref"):
+		return
+	for observation: Dictionary in stored_observations:
+		var observation_id := String(
+			observation.get("observationId", ""),
+		).strip_edges()
+		if observation_id.is_empty():
+			continue
+		var mapping := _agent_system.find_resident_formal_memory_by_evidence_ref(
+			resident_id,
+			"runtime_observation:%s" % observation_id,
+		) as Dictionary
+		if not bool(mapping.get("ok", false)) or not bool(mapping.get("found", false)):
+			_record_error(
+				resident_id,
+				String(_resident_name_by_id.get(resident_id, "")),
+				decision_id,
+				"RUNTIME_OBSERVATION_MEMORY_MAPPING_MISSING",
+				false,
+				{"observationId": observation_id},
+			)
+			continue
+		var mapped := _runtime_observations.mark_root_memory(
+			observation_id,
+			mapping,
+		) as Dictionary
+		if not bool(mapped.get("ok", false)):
+			_record_error(
+				resident_id,
+				String(_resident_name_by_id.get(resident_id, "")),
+				decision_id,
+				String(mapped.get("errorCode", "RUNTIME_OBSERVATION_MEMORY_MAPPING_FAILED")),
+				false,
+				{"observationId": observation_id},
+			)
+
+
 func close_session() -> Dictionary:
 	_generation += 1
 	_inflight.clear()
@@ -1280,6 +1493,7 @@ func close_session() -> Dictionary:
 	_world = null
 	_connected_resident_ids.clear()
 	_photo_store.clear()
+	_runtime_observations.reset()
 	return _agent_system.close_game() as Dictionary
 
 
@@ -1304,6 +1518,7 @@ func discard_unpublished_new_game(
 	_world = null
 	_connected_resident_ids.clear()
 	_photo_store.clear()
+	_runtime_observations.reset()
 	_agent_system.close_game()
 	if context.is_empty():
 		return {"ok": true, "errorCode": "", "retryable": false, "changed": false}
@@ -1607,6 +1822,29 @@ func _request_agent_decision(request: Dictionary) -> void:
 			_redispatch(resident_id, decision_id)
 			return
 		wake = (latest_request.get("wakePacket", {}) as Dictionary).duplicate(true)
+	var observation_attachment := _runtime_observations.attach_to_wake(
+		resident_id,
+		decision_id,
+		wake,
+	) as Dictionary
+	if not bool(observation_attachment.get("ok", false)):
+		_record_error(
+			resident_id,
+			resident_name,
+			decision_id,
+			String(
+				observation_attachment.get(
+					"errorCode",
+					"RUNTIME_OBSERVATION_DISPATCH_FAILED",
+				)
+			),
+			false,
+		)
+		_redispatch(resident_id, decision_id)
+		return
+	wake = (
+		observation_attachment.get("wakePacket", wake) as Dictionary
+	).duplicate(true)
 	var generation := _generation
 	var attempt := int(_decision_attempts.get(decision_id, 0)) + 1
 	_decision_attempts[decision_id] = attempt
@@ -1630,15 +1868,24 @@ func _request_agent_decision(request: Dictionary) -> void:
 		})
 	var accepted := _agent_system.request_decision(resident_id,
 		wake.duplicate(true),
-		_on_agent_result.bind(
+			_on_agent_result.bind(
 			resident_id,
 			resident_name,
 			decision_id,
 			generation,
-		),) as Dictionary
+			),) as Dictionary
 	if bool(accepted.get("ok", false)):
+		var stored_observations: Array[Dictionary] = (
+			_runtime_observations.mark_stored(decision_id) as Array[Dictionary]
+		)
+		_record_runtime_observation_memory_mappings(
+			resident_id,
+			decision_id,
+			stored_observations,
+		)
 		return
 	_inflight.erase(decision_id)
+	_runtime_observations.release_dispatch(decision_id)
 	var accepted_errors: Array = []
 	if accepted.get("errors") is Array:
 		accepted_errors = (accepted.get("errors") as Array).duplicate(true)
@@ -1704,9 +1951,18 @@ func _on_agent_result(
 		or String(inflight.get("residentId", "")) != resident_id
 	):
 		return
+	var result_ok := bool(result.get("ok", false))
+	var result_error_code := String(
+		result.get("errorCode", "AGENT_DECISION_REQUEST_FAILED"),
+	)
 	var superseded := bool(inflight.get("superseded", false))
 	_inflight.erase(decision_id)
 	if superseded or bool(result.get("stale", false)):
+		_runtime_observations.mark_result(
+			decision_id,
+			result_ok,
+			result_error_code,
+		)
 		_decision_attempts.erase(decision_id)
 		if not debug_decision_completed.get_connections().is_empty():
 			debug_decision_completed.emit({
@@ -1723,7 +1979,7 @@ func _on_agent_result(
 				"agentResult": result.duplicate(true),
 			})
 		return
-	if not bool(result.get("ok", false)):
+	if not result_ok:
 		var diagnostic := _provider_service.get_latest_diagnostic(resident_id,) as Dictionary
 		var agent_errors_value: Variant = result.get("errors", [])
 		if agent_errors_value is Array:
@@ -1793,6 +2049,12 @@ func _on_agent_result(
 				inflight_wake,
 				error_code,
 			)
+		if not should_retry:
+			_runtime_observations.mark_result(
+				decision_id,
+				fallback_applied,
+				error_code,
+			)
 		if not debug_decision_completed.get_connections().is_empty():
 			debug_decision_completed.emit({
 				"residentId": resident_id,
@@ -1808,6 +2070,7 @@ func _on_agent_result(
 				"diagnostic": diagnostic.duplicate(true),
 			})
 		return
+	_runtime_observations.mark_result(decision_id, true)
 	_decision_attempts.erase(decision_id)
 	_clear_nonfinal_decision_errors(decision_id)
 	var decision := result.get("decision", {}) as Dictionary
@@ -2057,6 +2320,50 @@ func _round_robin_requests(
 		if not consumed.has(index):
 			result.append(requests[index])
 	return result
+
+
+func _request_pending_runtime_observation_wakes() -> Dictionary:
+	if _world == null or not _world.has_method("request_runtime_observation_wake"):
+		return _failure("WORLD_RUNTIME_OBSERVATION_WAKE_MISSING", false)
+	var scheduled_resident_ids: Array[String] = []
+	var deferred_resident_ids: Array[String] = []
+	var failures: Array[Dictionary] = []
+	for resident_id: String in _runtime_observations.pending_resident_ids():
+		var wake_request := _world.call(
+			"request_runtime_observation_wake",
+			resident_id,
+		) as Dictionary
+		if not bool(wake_request.get("ok", false)):
+			var error_code := String(
+				wake_request.get(
+					"errorCode",
+					"RUNTIME_OBSERVATION_WAKE_FAILED",
+				),
+			)
+			if error_code == "RUNTIME_OBSERVATION_TARGET_UNAVAILABLE":
+				deferred_resident_ids.append(resident_id)
+				continue
+			_runtime_observations.mark_pending_failed(
+				resident_id,
+				error_code,
+			)
+			failures.append({
+				"residentId": resident_id,
+				"errorCode": error_code,
+				"retryable": bool(wake_request.get("retryable", false)),
+			})
+			continue
+		scheduled_resident_ids.append(resident_id)
+	return {
+		"ok": failures.is_empty(),
+		"errorCode": (
+			"" if failures.is_empty() else "RUNTIME_OBSERVATION_WAKE_FAILED"
+		),
+		"retryable": false,
+		"scheduledResidentIds": scheduled_resident_ids,
+		"deferredResidentIds": deferred_resident_ids,
+		"failures": failures,
+	}
 
 
 func _prioritize_conversation_requests(

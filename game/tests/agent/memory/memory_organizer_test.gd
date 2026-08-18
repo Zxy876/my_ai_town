@@ -18,6 +18,8 @@ func _initialize() -> void:
 	_test_day_change_organizes_pending_evidence()
 	_test_stale_organization_cannot_overwrite_newer_evidence()
 	_test_organizer_renders_names_and_can_request_capacity_retry()
+	_test_reflection_requires_real_recent_evidence()
+	_test_reflection_is_stored_before_the_current_decision_retrieval()
 	_test_organizer_request_failure_does_not_block_context()
 	_finish_suite("MEMORY-ORGANIZER_PASS", [_test_root])
 
@@ -182,6 +184,114 @@ func _test_organizer_renders_names_and_can_request_capacity_retry() -> void:
 				.contains("important_memories"),
 			"retry identifies the overflowing field",
 		)
+
+
+func _test_reflection_requires_real_recent_evidence() -> void:
+	var root := _test_root.path_join("reflection-validation")
+	var store: RefCounted = (load(MEMORY_STORE_PATH) as Script).new(
+		root.path_join("resident_memory.json"),
+	)
+	var organizer: RefCounted = (load(MEMORY_ORGANIZER_PATH) as Script).new(
+		TestData.initialization(),
+		store,
+	)
+	var items := [{
+		"wake_packet": _event_wake(54),
+		"matched_intents": [],
+	}]
+	var candidate := TestData.empty_memory()
+	candidate["self_vulnerability_reflection"] = {
+		"text": "我发现自己忙起来就跳过核对，容易漏掉重要信息。",
+		"evidence_refs": ["event:event-54"],
+	}
+	var valid := organizer.call(
+		"validate_candidate",
+		candidate,
+		TestData.empty_memory(),
+		items,
+	) as Dictionary
+	_expect_ok(valid, "a reflection may cite a real source from this organization batch")
+	_expect_equal(
+		(valid.get("reflection", {}) as Dictionary).get("evidence_refs"),
+		["event:event-54"],
+		"validated reflection retains its evidence lineage",
+	)
+	var invalid_reflection := (
+		candidate["self_vulnerability_reflection"] as Dictionary
+	).duplicate(true)
+	invalid_reflection["evidence_refs"] = ["event:invented"]
+	candidate["self_vulnerability_reflection"] = invalid_reflection
+	var invalid := organizer.call(
+		"validate_candidate",
+		candidate,
+		TestData.empty_memory(),
+		items,
+	) as Dictionary
+	_expect_equal(invalid.get("ok"), false, "invented reflection evidence is rejected")
+	_expect_equal(invalid.get("reflection_failure"), true, "bad lineage requests a reflection retry")
+
+
+func _test_reflection_is_stored_before_the_current_decision_retrieval() -> void:
+	var system := _new_memory_system("reflection-before-decision")
+	var preparation: Dictionary = {}
+	for index in range(60, 64):
+		preparation = system.call("prepare_context", _event_wake(index)) as Dictionary
+	_expect(preparation.has("organization_token"), "reflection fixture reaches organization")
+	var candidate := TestData.empty_memory()
+	candidate["self_vulnerability_reflection"] = {
+		"text": "我发现自己只顾眼前动静时，会忽略需要持续核对的事情。",
+		"evidence_refs": ["event:event-60", "event:event-61"],
+	}
+	_expect_ok(
+		system.call(
+			"accept_organization",
+			preparation.get("organization_token"),
+			candidate,
+		),
+		"evidence-bound reflection is accepted into formal memory",
+	)
+	var public_result := system.call("get_read_only_memory") as Dictionary
+	_expect_ok(public_result, "reflected memory is publicly readable")
+	var formal_memories := (
+		(public_result.get("memory", {}) as Dictionary).get("formal_memories", []) as Array
+	)
+	var reflection_found := false
+	for entry_value: Variant in formal_memories:
+		var entry := entry_value as Dictionary
+		if String(entry.get("nodeKind", "")) == "reflection":
+			reflection_found = true
+			break
+	_expect(reflection_found, "public memory distinguishes a self-reflection node")
+	var retrieved := system.call("retrieve_context", _event_wake(63)) as Dictionary
+	_expect_ok(retrieved, "decision context can be retrieved after reflection")
+	_expect(
+		String(retrieved.get("memory_prompt", "")).contains("只顾眼前动静"),
+		"the new vulnerability reflection participates in the same decision cycle",
+	)
+	var captured := system.call("capture_persistent_state") as Dictionary
+	_expect_ok(captured, "reflection reuses the existing memory save transaction")
+	var restored := _new_memory_system("reflection-restored")
+	_expect_ok(
+		restored.call(
+			"apply_persistent_state",
+			captured.get("memory_state"),
+		),
+		"reflection restores through the existing memory restore transaction",
+	)
+	var restored_public := restored.call("get_read_only_memory") as Dictionary
+	var restored_entries := (
+		(restored_public.get("memory", {}) as Dictionary).get("formal_memories", []) as Array
+	)
+	var restored_reflection := false
+	for entry_value: Variant in restored_entries:
+		var entry := entry_value as Dictionary
+		if (
+			String(entry.get("nodeKind", "")) == "reflection"
+			and String(entry.get("subject", "")).contains("只顾眼前动静")
+		):
+			restored_reflection = true
+			break
+	_expect(restored_reflection, "save and restore preserve the reflection node")
 
 func _test_organizer_request_failure_does_not_block_context() -> void:
 	var system := _new_memory_system("organizer-request-failure")

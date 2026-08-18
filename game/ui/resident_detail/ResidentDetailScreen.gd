@@ -25,6 +25,7 @@ enum LayoutProfile {
 
 
 const UiViewModel := preload("res://ui/common/AiTownUiViewModel.gd")
+const WebInputBridge := preload("res://ui/common/WebTextInputBridge.gd")
 const TAB_SCENE := preload(
 	"res://ui/resident_detail/components/ResidentDetailTabButton.tscn"
 )
@@ -39,39 +40,39 @@ const METER_SCENE := preload(
 )
 const BACKGROUND_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "resident_detail_background.png"
+	+"resident_detail_background.png"
 )
 const STATUS_DETAIL_PANEL_TEXTURE := preload(
 	"res://assets/ui/common/runtime/paper_wood_panel/"
-	+ "paper_wood_panel_master_v1_512.png"
+	+"paper_wood_panel_master_v1_512.png"
 )
 const RELATIONSHIP_BACKGROUND_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "relationship_page_clean_v4.png"
+	+"relationship_page_clean_v4.png"
 )
 const MEMORY_BACKGROUND_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "memory_page_clean_v4.png"
+	+"memory_page_clean_v4.png"
 )
 const MEMORY_OPERATION_BACKGROUND_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "memory_operation_page_clean_v5.png"
+	+"memory_operation_page_clean_v5.png"
 )
 const RELATIONSHIP_ROW_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "relationship_row_exact_v3.png"
+	+"relationship_row_exact_v3.png"
 )
 const MEMORY_ROW_TEXTURE := preload(
 	"res://assets/ui/resident_detail/runtime/"
-	+ "memory_row_exact_v3.png"
+	+"memory_row_exact_v3.png"
 )
 const SCROLLBAR_TRACK_TEXTURE := preload(
 	"res://assets/ui/common/scrollbar/wood_v1/variants/dropdown_short/"
-	+ "scrollbar_track_wood_v1_dropdown_short.png"
+	+"scrollbar_track_wood_v1_dropdown_short.png"
 )
 const SCROLLBAR_THUMB_TEXTURE := preload(
 	"res://assets/ui/common/scrollbar/wood_v1/variants/dropdown_short/"
-	+ "scrollbar_thumb_wood_v1_dropdown_short.png"
+	+"scrollbar_thumb_wood_v1_dropdown_short.png"
 )
 const PAGE_THEME := preload(
 	"res://ui/resident_detail/components/ResidentDetailReferenceTypography.tres"
@@ -116,6 +117,7 @@ const ACTION_INTENTS := {
 	"retry": "resident_detail.retry",
 	"editMemory": "resident_detail.change_memory",
 	"deleteMemory": "resident_detail.change_memory",
+	"observeRuntime": "resident_detail.observe",
 	"filterInfluencing": "resident_detail.filter_memories",
 	"filterAll": "resident_detail.filter_memories",
 	"filterPast": "resident_detail.filter_memories",
@@ -135,6 +137,7 @@ const ACTION_INTENTS := {
 const OPTIONAL_ACTION_KEYS: Array[String] = [
 	"editMemory",
 	"deleteMemory",
+	"observeRuntime",
 	"filterInfluencing",
 	"filterAll",
 	"filterPast",
@@ -260,18 +263,15 @@ const WIDE_MEMORY_OPERATION_RECTS := {
 	"title": Rect2(1030, 218, 375, 58),
 	"selectedHeading": Rect2(675, 290, 410, 42),
 	"selectedBody": Rect2(685, 335, 350, 500),
-	"operationHeading": Rect2(1120, 290, 675, 42),
-	"editTab": Rect2(1121, 337, 309, 56),
-	"deleteTab": Rect2(1451, 337, 317, 56),
-	"inputHeading": Rect2(1121, 411, 667, 38),
-	"input": Rect2(1121, 450, 609, 290),
+	"inputHeading": Rect2(1121, 290, 667, 42),
+	"input": Rect2(1121, 337, 667, 403),
 	"hint": Rect2(1121, 760, 667, 72),
 	"cancel": Rect2(1145, 850, 265, 62),
 	"confirm": Rect2(1475, 850, 265, 62),
 }
 const WIDE_MEMORY_OPERATION_SCROLL_RECTS := {
 	"selected": Rect2(1042, 335, 38, 500),
-	"input": Rect2(1734, 450, 38, 290),
+	"input": Rect2(1734, 337, 38, 403),
 }
 const WIDE_ROW_RECTS: Array[Rect2] = [
 	Rect2(745, 317, 1046, 107),
@@ -301,7 +301,6 @@ var _completed_request_ids: Dictionary = {}
 var _local_feedback := ""
 var _adapter_contract_available := false
 var _memory_operation_visible := false
-var _memory_operation_mode := "edit"
 
 var _background: TextureRect
 var _resident_sprite: TextureRect
@@ -320,17 +319,16 @@ var _memory_operation_root: Control
 var _memory_operation_title: Label
 var _memory_operation_selected_heading: Label
 var _memory_operation_selected_body: RichTextLabel
-var _memory_operation_heading: Label
-var _memory_operation_edit_tab: Button
-var _memory_operation_delete_tab: Button
 var _memory_operation_input_heading: Label
 var _memory_operation_input: TextEdit
 var _memory_operation_hint: Label
 var _memory_operation_cancel: ResidentDetailRefreshButton
 var _memory_operation_confirm: ResidentDetailRefreshButton
+var _runtime_observation_id := ""
 var _content_scroll_chrome: Control
 var _selected_memory_scroll_chrome: Control
 var _memory_input_scroll_chrome: Control
+var _memory_operation_web_input: WebTextInputBridge
 var _wood_scroll_chromes: Array[Dictionary] = []
 var _wood_scroll_refresh_queued := false
 var _status_detail_backdrop: Control
@@ -363,11 +361,12 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	theme = PAGE_THEME
-	_selected_content_font = FontVariation.new()
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_MODE_DISABLED
+	_build_default_theme_fonts()
 	_selected_content_font.base_font = PAGE_THEME.default_font
 	_selected_content_font.variation_embolden = 0.8
 	_build_interface()
+	visibility_changed.connect(_on_visibility_changed)
 	resized.connect(_queue_layout)
 	get_viewport().size_changed.connect(_queue_layout)
 	if _adapter != null:
@@ -381,12 +380,14 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	_close_memory_operation_web_input()
 	_disconnect_adapter()
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_pressed() or event.is_echo():
 		return
+	_reconcile_memory_operation_bridge_before_input()
 	var cancel_requested := event.is_action_pressed(&"ui_cancel")
 	if event is InputEventKey:
 		cancel_requested = (
@@ -451,7 +452,7 @@ func bind_town_ui_adapter(adapter: Object) -> void:
 	_adapter = adapter
 	_reset_view_model_state()
 	if _adapter != null and _adapter.has_signal("view_model_changed"):
-		var callback := Callable(self, "_on_view_model_changed")
+		var callback := Callable(self , _on_view_model_changed)
 		if not _adapter.is_connected("view_model_changed", callback):
 			_adapter.connect("view_model_changed", callback)
 	if not is_node_ready():
@@ -769,7 +770,7 @@ func _build_interface() -> void:
 	_content_root.mouse_filter = Control.MOUSE_FILTER_PASS
 	_content_scroll.add_child(_content_root)
 	_content_scroll_chrome = _build_wood_scroll_chrome(
-		self,
+		self ,
 		"ContentWoodScrollbar",
 		_content_scroll.get_v_scroll_bar(),
 	)
@@ -828,13 +829,13 @@ func _build_memory_operation_panel() -> void:
 	_memory_operation_title = _make_label(
 		"MemoryOperationTitle", 30, Color("3f2818"), HORIZONTAL_ALIGNMENT_CENTER, 1,
 	)
-	_memory_operation_title.text = "记忆操作"
+	_memory_operation_title.text = "投递观察"
 	_memory_operation_root.add_child(_memory_operation_title)
 
 	_memory_operation_selected_heading = _make_label(
 		"MemoryOperationSelectedHeading", 23, Color("3f2818"), HORIZONTAL_ALIGNMENT_CENTER, 1,
 	)
-	_memory_operation_selected_heading.text = "已选记忆"
+	_memory_operation_selected_heading.text = "目标居民"
 	_memory_operation_root.add_child(_memory_operation_selected_heading)
 
 	_memory_operation_selected_body = RichTextLabel.new()
@@ -861,15 +862,6 @@ func _build_memory_operation_panel() -> void:
 	_memory_operation_selected_body.set_meta("gate_id", "MemoryOperationSelectedBody")
 	_memory_operation_root.add_child(_memory_operation_selected_body)
 
-	_memory_operation_heading = _make_label(
-		"MemoryOperationHeading", 23, Color("3f2818"), HORIZONTAL_ALIGNMENT_CENTER, 1,
-	)
-	_memory_operation_heading.text = "可执行操作"
-	_memory_operation_root.add_child(_memory_operation_heading)
-
-	_memory_operation_edit_tab = _make_memory_operation_tab("改写记忆", "edit")
-	_memory_operation_delete_tab = _make_memory_operation_tab("删除记忆", "delete")
-
 	_memory_operation_input_heading = _make_label(
 		"MemoryOperationInputHeading", 22, Color("3f2818"), HORIZONTAL_ALIGNMENT_LEFT, 1,
 	)
@@ -886,10 +878,32 @@ func _build_memory_operation_panel() -> void:
 	_memory_operation_input.add_theme_color_override("font_color", Color("3f2818"))
 	_memory_operation_input.add_theme_color_override("caret_color", Color("6c3d20"))
 	_memory_operation_input.text_changed.connect(_on_memory_input_text_changed)
-	var empty_style := StyleBoxEmpty.new()
+	var input_style := StyleBoxFlat.new()
+	input_style.bg_color = Color("edc98f")
+	input_style.border_color = Color("bd8750")
+	input_style.set_border_width_all(2)
+	input_style.set_corner_radius_all(4)
+	input_style.content_margin_left = 16.0
+	input_style.content_margin_top = 14.0
+	input_style.content_margin_right = 16.0
+	input_style.content_margin_bottom = 14.0
 	for state: String in ["normal", "focus", "read_only"]:
-		_memory_operation_input.add_theme_stylebox_override(state, empty_style)
+		_memory_operation_input.add_theme_stylebox_override(
+			state,
+			input_style.duplicate(),
+		)
 	_memory_operation_root.add_child(_memory_operation_input)
+
+	_memory_operation_web_input = WebInputBridge.new(get_tree())
+	_memory_operation_web_input.text_changed.connect(
+		_on_memory_operation_web_text_changed,
+	)
+	_memory_operation_web_input.cancel_requested.connect(
+		_close_memory_operation_panel,
+	)
+	_memory_operation_input.resized.connect(
+		_refresh_memory_operation_web_input_rect,
+	)
 
 	_memory_operation_hint = _make_label(
 		"MemoryOperationHint", 19, Color("806a5b"), HORIZONTAL_ALIGNMENT_CENTER, 3,
@@ -901,7 +915,7 @@ func _build_memory_operation_panel() -> void:
 	_memory_operation_cancel.name = "CancelMemoryOperation"
 	_memory_operation_cancel.refresh_requested.connect(_close_memory_operation_panel)
 	_memory_operation_cancel.configure({
-		"label": "取消", "accessibleLabel": "取消记忆操作", "fontSize": 25,
+		"label": "取消", "accessibleLabel": "取消投递观察", "fontSize": 25,
 		"disabled": false, "surfaceVisible": false,
 	})
 	_memory_operation_root.add_child(_memory_operation_cancel)
@@ -910,7 +924,7 @@ func _build_memory_operation_panel() -> void:
 	_memory_operation_confirm.name = "ConfirmMemoryOperation"
 	_memory_operation_confirm.refresh_requested.connect(_confirm_memory_operation)
 	_memory_operation_confirm.configure({
-		"label": "确认修改", "accessibleLabel": "确认修改记忆", "fontSize": 25,
+		"label": "确认投递", "accessibleLabel": "确认投递观察", "fontSize": 25,
 		"disabled": false, "surfaceVisible": false,
 	})
 	_memory_operation_root.add_child(_memory_operation_confirm)
@@ -925,25 +939,6 @@ func _build_memory_operation_panel() -> void:
 		"MemoryInputWoodScrollbar",
 		_memory_operation_input.get_v_scroll_bar(),
 	)
-
-
-func _make_memory_operation_tab(copy: String, operation: String) -> Button:
-	var button := Button.new()
-	button.name = "MemoryOperation%sTab" % operation.capitalize()
-	button.text = copy
-	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	button.clip_text = true
-	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	button.focus_mode = Control.FOCUS_ALL
-	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	button.add_theme_font_size_override("font_size", 23)
-	button.add_theme_color_override("font_color", Color("3f2818"))
-	button.add_theme_color_override("font_hover_color", Color("b94d2d"))
-	button.add_theme_color_override("font_pressed_color", Color("6c3d20"))
-	button.pressed.connect(_set_memory_operation_mode.bind(operation))
-	_memory_operation_root.add_child(button)
-	return button
-
 
 func _build_wood_scroll_chrome(
 	parent: Control,
@@ -1089,6 +1084,118 @@ func _on_memory_input_text_changed() -> void:
 	_queue_wood_scrollbar_refresh()
 
 
+func _on_visibility_changed() -> void:
+	if is_visible_in_tree():
+		return
+	if _memory_operation_visible:
+		_memory_operation_visible = false
+		_runtime_observation_id = ""
+	_close_memory_operation_web_input()
+
+
+func _reconcile_memory_operation_bridge_for_render(selected_tab: String) -> void:
+	if not _memory_operation_visible:
+		_close_memory_operation_web_input()
+		return
+	if selected_tab != "memories":
+		_memory_operation_visible = false
+		_runtime_observation_id = ""
+		_close_memory_operation_web_input()
+		_apply_memory_operation_visibility()
+		return
+	if (
+		_memory_operation_web_input != null
+		and _memory_operation_web_input.is_open()
+	):
+		return
+	if not is_instance_valid(_memory_operation_input):
+		_close_memory_operation_web_input()
+		return
+	if (
+		not _memory_operation_input.is_inside_tree()
+		or not _memory_operation_input.is_visible_in_tree()
+	):
+		_close_memory_operation_web_input()
+
+
+func _reconcile_memory_operation_bridge_before_input() -> void:
+	if _memory_operation_web_input == null:
+		return
+	if not _memory_operation_web_input.is_open():
+		return
+	if not _memory_operation_visible:
+		_close_memory_operation_web_input()
+		return
+	if not is_visible_in_tree():
+		_memory_operation_visible = false
+		_runtime_observation_id = ""
+		_close_memory_operation_web_input()
+		return
+	if not is_instance_valid(_memory_operation_input):
+		_close_memory_operation_web_input()
+		return
+	if (
+		not _memory_operation_input.is_inside_tree()
+		or not _memory_operation_input.is_visible_in_tree()
+	):
+		_close_memory_operation_web_input()
+
+
+func _on_memory_operation_web_text_changed(value: String) -> void:
+	if (
+		_memory_operation_input != null
+		and _memory_operation_input.text != value
+	):
+		_memory_operation_input.text = value
+
+
+func _open_memory_operation_web_input() -> bool:
+	if _memory_operation_web_input == null or not OS.has_feature("web"):
+		return false
+	_memory_operation_input.release_focus()
+	var opened := _memory_operation_web_input.open(
+		_memory_operation_input,
+		_memory_operation_input.text,
+		{
+			"id": "resident-detail-memory-operation-%s" % _runtime_observation_id,
+			"ariaLabel": "观察内容",
+			"maxChars": 2000,
+			"language": "zh-CN",
+			"color": "#3f2818",
+			"caretColor": "#6c3d20",
+			"background": "#edc98f",
+			"border": "2px solid #bd8750",
+		},
+	)
+	if opened:
+		_refresh_memory_operation_web_input_rect.call_deferred()
+	return opened
+
+
+func _close_memory_operation_web_input() -> void:
+	if _memory_operation_web_input != null:
+		_memory_operation_web_input.close()
+
+
+func _refresh_memory_operation_web_input_rect() -> void:
+	if (
+		_memory_operation_web_input != null
+		and _memory_operation_web_input.is_open()
+	):
+		_memory_operation_web_input.refresh_rect()
+
+
+func _sync_memory_operation_from_web() -> void:
+	if (
+		_memory_operation_web_input == null
+		or not _memory_operation_web_input.is_open()
+	):
+		return
+	var value := _memory_operation_web_input.get_text()
+	if _memory_operation_input.text != value:
+		_memory_operation_input.text = value
+
+
 func _render() -> void:
 	var resident := _render_data.get("resident", {}) as Dictionary
 	_name_label.text = str(
@@ -1112,6 +1219,7 @@ func _render() -> void:
 	)
 	if selected_tab not in TAB_IDS:
 		selected_tab = "status"
+	_reconcile_memory_operation_bridge_for_render(selected_tab)
 	_apply_page_background(selected_tab)
 	var tabs := _tabs_by_id()
 	for tab_id: String in TAB_IDS:
@@ -1246,7 +1354,7 @@ func _configure_section_chrome(selected_tab: String) -> void:
 			"filterRelationshipPlayer",
 		]
 		action_copy = "关系脉络"
-	else:
+	elif selected_tab == "memories":
 		filter_copy = ["全部", "正在影响", "往事", "存疑", "异常", "我的介入"]
 		filter_ids = ["all", "influencing", "past", "doubtful", "anomalous", "interventions"]
 		filter_action_keys = [
@@ -1257,7 +1365,9 @@ func _configure_section_chrome(selected_tab: String) -> void:
 			"filterAnomalous",
 			"filterInterventions",
 		]
-		action_copy = "记忆操作"
+		action_copy = "投递观察"
+	else:
+		action_copy = "刷新"
 	var content := _render_data.get("content", {}) as Dictionary
 	var selected_filter_id := str(content.get("filterId", "all"))
 	for index: int in mini(filter_copy.size(), _section_filter_buttons.size()):
@@ -1326,37 +1436,30 @@ func _apply_page_background(selected_tab: String) -> void:
 			_background.texture = BACKGROUND_TEXTURE
 
 
-func _open_memory_change_dialog(operation := "edit") -> void:
+func _open_memory_change_dialog(_operation := "u0") -> void:
 	if str(_render_data.get("selectedTab", "status")) != "memories":
 		return
-	var items := ((_render_data.get("content", {}) as Dictionary).get("items", []) as Array)
-	if items.is_empty():
-		_local_feedback = "请先选择一条记忆。"
-		_present_local_feedback()
-		return
-	_sync_selected_memory_index(items)
 	_memory_operation_visible = true
-	_memory_operation_mode = operation if operation in ["edit", "delete"] else "edit"
+	_runtime_observation_id = "manual-ui-%d" % int(
+		Time.get_unix_time_from_system() * 1000000.0,
+	)
+	_memory_operation_input.text = ""
 	_apply_page_background("memories")
 	_refresh_memory_operation_copy()
 	_apply_responsive_layout()
-	_memory_operation_edit_tab.grab_focus.call_deferred()
+	if not _open_memory_operation_web_input():
+		_memory_operation_input.grab_focus.call_deferred()
 
 
 func _close_memory_operation_panel() -> void:
 	if not _memory_operation_visible:
 		return
 	_memory_operation_visible = false
+	_runtime_observation_id = ""
+	_close_memory_operation_web_input()
 	_apply_page_background(str(_render_data.get("selectedTab", "memories")))
 	_apply_responsive_layout()
 	_update_focus_chain()
-
-
-func _set_memory_operation_mode(operation: String) -> void:
-	if operation not in ["edit", "delete"]:
-		return
-	_memory_operation_mode = operation
-	_refresh_memory_operation_copy()
 
 
 func _selected_memory_item() -> Dictionary:
@@ -1402,89 +1505,62 @@ func _sync_selected_memory_index(items: Array) -> void:
 
 
 func _refresh_memory_operation_copy() -> void:
-	var item := _selected_memory_item()
-	var kind_label := str(item.get("kindLabel", "记忆"))
-	var title := str(item.get("title", "未命名记忆"))
-	var summary := str(item.get("summary", ""))
-	var related_labels: Array[String] = []
-	for value: Variant in item.get("relatedResidents", []) as Array:
-		if value is Dictionary:
-			var label := str((value as Dictionary).get("label", ""))
-			if not label.is_empty():
-				related_labels.append(label)
+	var resident := _render_data.get("resident", {}) as Dictionary
+	var display_name := String(resident.get("displayName", "居民"))
+	var occupation := String(resident.get("occupationLabel", "")).strip_edges()
+	var place := String(resident.get("currentPlaceLabel", "")).strip_edges()
 	_memory_operation_selected_body.clear()
-	_memory_operation_selected_body.add_text("类型：")
+	_memory_operation_selected_body.add_text("目标：")
 	_memory_operation_selected_body.push_color(Color("b94d2d"))
-	_memory_operation_selected_body.add_text(kind_label)
+	_memory_operation_selected_body.add_text(display_name)
 	_memory_operation_selected_body.pop()
-	_memory_operation_selected_body.add_text("\n\n")
-	_memory_operation_selected_body.push_color(Color("b94d2d"))
-	_memory_operation_selected_body.add_text("【%s】" % kind_label)
-	_memory_operation_selected_body.pop()
-	_memory_operation_selected_body.add_text(" %s\n%s\n\n" % [title, summary])
-	_memory_operation_selected_body.add_text(
-		"时间：%s\n来源：%s\n相关人物：%s\n与你有关：" % [
-			str(item.get("timeLabel", "未注明")),
-			_memory_source_label(item),
-			"、".join(related_labels) if not related_labels.is_empty() else "无",
-		]
-	)
-	_memory_operation_selected_body.push_color(Color("b94d2d"))
-	_memory_operation_selected_body.add_text(
-		"是" if bool(item.get("playerInvolved", false)) else "否"
-	)
-	_memory_operation_selected_body.pop()
+	if not occupation.is_empty():
+		_memory_operation_selected_body.add_text("\n\n身份：%s" % occupation)
+	if not place.is_empty():
+		_memory_operation_selected_body.add_text("\n当前地点：%s" % place)
 	_memory_operation_selected_body.scroll_to_line(0)
-	var deleting := _memory_operation_mode == "delete"
-	_memory_operation_input_heading.text = (
-		"删除后，这段记忆不会再影响居民："
-		if deleting
-		else "请输入改写后的内容："
-	)
-	_memory_operation_input.editable = not deleting
-	# 批准参考中的编辑框初始为空，原记忆只在左栏展示。
-	_memory_operation_input.text = ""
-	_memory_operation_hint.text = (
-		"删除会保留一次你的介入记录，居民之后仍可能因证据重新想起。"
-		if deleting
-		else "系统会根据居民之后重新遇到当事人、看到证据或听到其他说法，自行判断更加确信、开始怀疑、修正或发现被篡改。"
-	)
+	_memory_operation_input_heading.text = "观察内容"
+	_memory_operation_input.editable = true
+	_memory_operation_hint.text = ""
 	_memory_operation_confirm.configure({
-		"label": "确认删除" if deleting else "确认修改",
-		"accessibleLabel": "确认删除记忆" if deleting else "确认修改记忆",
+		"label": "确认投递",
+		"accessibleLabel": "确认投递观察",
 		"fontSize": 25,
 		"disabled": false,
 		"surfaceVisible": false,
 	})
-	_apply_memory_operation_tab_style(_memory_operation_edit_tab, not deleting)
-	_apply_memory_operation_tab_style(_memory_operation_delete_tab, deleting)
-
-
-func _apply_memory_operation_tab_style(button: Button, selected: bool) -> void:
-	var text_color := Color("b94d2d") if selected else Color("3f2818")
-	var empty := StyleBoxEmpty.new()
-	for state: String in ["normal", "hover", "pressed", "focus", "disabled"]:
-		button.add_theme_stylebox_override(state, empty)
-	button.add_theme_color_override("font_color", text_color)
-	button.add_theme_color_override("font_hover_color", text_color)
-	button.add_theme_color_override("font_pressed_color", text_color)
-	button.add_theme_color_override("font_focus_color", text_color)
-	button.add_theme_color_override("font_hover_pressed_color", text_color)
 
 
 func _confirm_memory_operation() -> void:
-	var item := _selected_memory_item()
-	if item.is_empty():
+	if (
+		_memory_operation_web_input != null
+		and _memory_operation_web_input.is_open()
+	):
+		_sync_memory_operation_from_web()
+	var observation_text := _memory_operation_input.text
+	if observation_text.strip_edges().is_empty():
+		_memory_operation_hint.text = "观察内容不能为空。"
+		if (
+			_memory_operation_web_input != null
+			and _memory_operation_web_input.is_open()
+		):
+			_memory_operation_web_input.focus()
+		else:
+			_memory_operation_input.grab_focus()
 		return
-	var action_key := "deleteMemory" if _memory_operation_mode == "delete" else "editMemory"
-	var player_text := _memory_operation_input.text.strip_edges()
-	if action_key == "editMemory" and player_text.is_empty():
-		_memory_operation_hint.text = "改写内容不能为空。"
-		_memory_operation_input.grab_focus()
+	if observation_text.length() > 2000:
+		_memory_operation_hint.text = "观察内容不能超过 2000 字。"
+		if (
+			_memory_operation_web_input != null
+			and _memory_operation_web_input.is_open()
+		):
+			_memory_operation_web_input.focus()
+		else:
+			_memory_operation_input.grab_focus()
 		return
-	if _request_action(action_key, {
-		"memoryKey": str(item.get("memoryId", "")),
-		"playerText": player_text,
+	if _request_action("observeRuntime", {
+		"observationId": _runtime_observation_id,
+		"text": observation_text,
 	}):
 		_close_memory_operation_panel()
 
@@ -1514,9 +1590,6 @@ func _layout_memory_operation_panel() -> void:
 		"title": _memory_operation_title,
 		"selectedHeading": _memory_operation_selected_heading,
 		"selectedBody": _memory_operation_selected_body,
-		"operationHeading": _memory_operation_heading,
-		"editTab": _memory_operation_edit_tab,
-		"deleteTab": _memory_operation_delete_tab,
 		"inputHeading": _memory_operation_input_heading,
 		"input": _memory_operation_input,
 		"hint": _memory_operation_hint,
@@ -1531,7 +1604,6 @@ func _layout_memory_operation_panel() -> void:
 	for label_data: Array in [
 		[_memory_operation_title, 1],
 		[_memory_operation_selected_heading, 1],
-		[_memory_operation_heading, 1],
 		[_memory_operation_input_heading, 1],
 		[_memory_operation_hint, 3],
 	]:
@@ -1585,7 +1657,7 @@ func _render_content() -> void:
 		)
 		empty.text = (
 			"居民公开详情暂不可用。\n"
-			+ "可查看的居民资料尚未准备好。"
+			+"可查看的居民资料尚未准备好。"
 		)
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		var empty_rect := _empty_content_local_rect()
@@ -2378,7 +2450,7 @@ func _relationship_portrait_path(item: Dictionary) -> String:
 		return ""
 	return (
 		"res://assets/characters/resident_2d_rig_v1/wardrobe_v1/"
-		+ "classic_sets/runtime_portraits/%s_front.png" % "_".join(parts)
+		+"classic_sets/runtime_portraits/%s_front.png" % "_".join(parts)
 	)
 
 
@@ -2693,6 +2765,7 @@ func _apply_responsive_layout() -> void:
 	_render_content()
 	_apply_memory_operation_visibility()
 	_layout_memory_operation_panel()
+	_refresh_memory_operation_web_input_rect()
 
 
 func _apply_wide_geometry(viewport_size: Vector2) -> void:
@@ -3039,8 +3112,6 @@ func _update_focus_chain() -> void:
 	_focus_controls.clear()
 	if _memory_operation_visible:
 		for control: Control in [
-			_memory_operation_edit_tab,
-			_memory_operation_delete_tab,
 			_memory_operation_input,
 			_memory_operation_cancel,
 			_memory_operation_confirm,
@@ -3101,7 +3172,11 @@ func _focused_semantic() -> String:
 	for tab_id: String in TAB_IDS:
 		if _tab_buttons.get(tab_id) == focused:
 			return "tab:%s" % tab_id
-	var filter_index := _section_filter_buttons.find(focused)
+	var filter_index := (
+		_section_filter_buttons.find(focused as Button)
+		if focused is Button
+		else -1
+	)
 	if filter_index >= 0:
 		return "filter:%d" % filter_index
 	var row_index := _row_controls.find(focused)
@@ -3165,7 +3240,7 @@ func _on_primary_action_requested() -> void:
 
 func _on_section_action_requested() -> void:
 	if str(_render_data.get("selectedTab", "status")) == "memories":
-		_open_memory_change_dialog("edit")
+		_open_memory_change_dialog("u0")
 		return
 	request_refresh()
 
@@ -3329,7 +3404,7 @@ func _refresh_from_adapter() -> void:
 func _disconnect_adapter() -> void:
 	UI_SIGNALS.disconnect_view_model(
 		_adapter,
-		Callable(self, "_on_view_model_changed"),
+		Callable(self , _on_view_model_changed),
 	)
 
 
@@ -3355,6 +3430,7 @@ func _enter_adapter_unavailable(code: String, message: String) -> void:
 		"retry": "resident_detail.retry",
 		"editMemory": "resident_detail.change_memory",
 		"deleteMemory": "resident_detail.change_memory",
+		"observeRuntime": "resident_detail.observe",
 	}
 	for action_key: String in intents:
 		actions[action_key] = {
