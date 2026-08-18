@@ -6,7 +6,7 @@ func _initialize() -> void:
 	if compiler_script != null:
 		_test_stable_baseline_and_dynamic_context(compiler_script)
 		_test_dynamic_constraints_and_data_boundaries(compiler_script)
-                _test_prompt_excludes_townwide_resident_overview(compiler_script)
+		_test_prompt_excludes_townwide_resident_overview(compiler_script)
 	_finish_prompt_test("AGENT_DYNAMIC_PROMPT_PASS")
 
 
