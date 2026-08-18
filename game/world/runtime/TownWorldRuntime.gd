@@ -15167,10 +15167,6 @@ func _wake_packet(
 				"activeNeeds": _resident_conditions.get_active_needs(resident_name, ) as Array,
 			},
 			"nearby": nearby,
-			"town_residents_overview": _agent_town_residents_overview(
-				String(resident.get("residentId", "")),
-				now,
-			),
 			"place": place_snapshot,
 			"rhythm": _life_rhythm_snapshot(resident),
 			"work_tasks": get_work_tasks_for_resident(resident_name),
@@ -15377,31 +15373,6 @@ func _agent_resident_overview_entry(
 		"nearby_of_nearby": sub_nearby_names,
 		"active_conversation_with": conv_partner_name,
 	}
-
-
-func _agent_town_residents_overview(
-	exclude_resident_id: String,
-	now: int,
-) -> Array[Dictionary]:
-	var result: Array[Dictionary] = []
-	var sorted_ids: Array[String] = []
-	for resident_id_value: Variant in _residents.keys():
-		sorted_ids.append(String(resident_id_value))
-	sorted_ids.sort()
-	for resident_id: String in sorted_ids:
-		if not exclude_resident_id.is_empty() and resident_id == exclude_resident_id:
-			continue
-		var resident := _residents[resident_id] as Dictionary
-		if not _resident_is_present(resident):
-			continue
-		result.append(_agent_resident_overview_entry(
-			resident_id,
-			_person_name_for_id(resident_id),
-			resident,
-			now,
-			false,
-		))
-	return result
 
 
 func _priority_onsite_service_task_for_resident(

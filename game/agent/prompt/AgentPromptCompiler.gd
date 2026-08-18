@@ -490,48 +490,6 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 			details.append("；".join(wait_pieces))
 		if not details.is_empty():
 			lines.append("  %s" % "；".join(details))
-	var town_residents_overview := snapshot.get("town_residents_overview", []) as Array
-	if not town_residents_overview.is_empty():
-		lines.append("其他居民当前状态：")
-		for row_value: Variant in town_residents_overview:
-			var row := row_value as Dictionary
-			var row_line := "- %s（%s）" % [
-				_person(row.get("resident_id", ""), row.get("name", "")),
-				(
-					String(row.get("job", ""))
-					if not String(row.get("job", "")).is_empty()
-					else "无职业"
-				),
-			]
-			var row_place := String(row.get("current_place", ""))
-			if not row_place.is_empty():
-				row_line += "，在%s" % row_place
-			var row_summary := String(row.get("current_action_summary", ""))
-			if not row_summary.is_empty():
-				var row_elapsed := int(row.get("elapsed_minutes", 0))
-				var row_left := int(row.get("estimated_free_in_minutes", 0))
-				row_line += "，%s" % row_summary
-				if row_elapsed > 0:
-					row_line += "（已%d分钟" % row_elapsed
-					if row_left > 0:
-						row_line += "，还有约%d分钟" % row_left
-					row_line += "）"
-			var row_wait := row.get("is_waiting_service", {}) as Dictionary
-			if not row_wait.is_empty():
-				var row_kind := String(row_wait.get("kind", "服务"))
-				var row_ahead := int(row_wait.get("ahead_count", 0))
-				var row_staffed := int(row_wait.get("workers_staffed", 0))
-				var row_waited := int(row_wait.get("waited_minutes", 0))
-				row_line += "；等待%s已%d分，前面%d人，在岗%d人" % [
-					row_kind,
-					row_waited,
-					row_ahead,
-					row_staffed,
-				]
-			var row_partner := String(row.get("active_conversation_with", ""))
-			if not row_partner.is_empty():
-				row_line += "；正在跟%s谈" % row_partner
-			lines.append(row_line)
 	var visible_props := place.get("visible_props", []) as Array
 	lines.append(
 		"眼前可见物件：%s（可见不等于本轮可以操作）。"
@@ -668,7 +626,7 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 			)
 			lines.append(
 				"  - 必须找到该收件人并用搭话说出这段文字才算送达；"
-				+ "走路、整理投递袋或对别人说都不能完成。",
+                               +"走路、整理投递袋或对别人说都不能完成。",
 			)
 		var service_request := (
 			task.get("service_request", {}) as Dictionary
@@ -677,7 +635,7 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 			lines.append(
 				(
 					"  - 服务请求：%s在%s提出%s；事项%s；物品%s；"
-					+ "目标地点%s；当前%s%s。"
+                                       +"目标地点%s；当前%s%s。"
 				)
 				% [
 					_person(
@@ -721,9 +679,9 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 				lines.append(
 					(
 						"  - 医患对话：状态%s，已尝试%d次。患者正在诊所等待，这是一项真实的当前工作。"
-						+ "如果准备处理，下一步先用“搭话”联系上面指定的患者；不要用看诊、接受检查、配药、"
-						+ "待着或普通物件动作冒充问诊。完成对话后再选择 World 开放的实际检查；"
-						+ "对话内容不能直接算作诊断、治疗或痊愈。"
+										+ "如果准备处理，下一步先用“搭话”联系上面指定的患者；不要用看诊、接受检查、配药、"
+										+ "待着或普通物件动作冒充问诊。完成对话后再选择 World 开放的实际检查；"
+										+ "对话内容不能直接算作诊断、治疗或痊愈。"
 					)
 					% [
 						_safe(medical_dialogue.get("status", "")),
@@ -798,8 +756,8 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 		lines.append(
 			(
 				"当前已有能推进真实职业任务的活动，应优先处理。"
-				+ "附近有同事、熟人或顾客时仍可围绕眼前工作自然说几句，"
-				+ "但不要虚构尚未完成的结果；真正推进任务必须选择上面标出的工作活动。"
+						+ "附近有同事、熟人或顾客时仍可围绕眼前工作自然说几句，"
+						+ "但不要虚构尚未完成的结果；真正推进任务必须选择上面标出的工作活动。"
 			),
 		)
 	var service_control := place.get("service_control", {}) as Dictionary
@@ -873,7 +831,7 @@ func _render_snapshot(wake_packet: Dictionary) -> String:
 				lines.append(
 					(
 						"你是患者。照常自由表达，同时必须在 medical_response 中选择%s；"
-						+ "describe 表示愿意描述，decline 表示不愿描述。"
+                                               +"describe 表示愿意描述，decline 表示不愿描述。"
 					)
 					% _join(response_options),
 				)
@@ -1116,7 +1074,7 @@ func _render_constraints(constraints: Dictionary) -> String:
 	if bool(post_injury_reaction.get("required", false)):
 		lines.append(
 			"受击后的首轮反应是必选项：只能提交当面质问攻击者，或直接去诊所；"
-			+ "不能继续原动作，也不能先做其他事"
+                       +"不能继续原动作，也不能先做其他事"
 		)
 	var medical_response := constraints.get(
 		"medical_response",
@@ -1126,7 +1084,7 @@ func _render_constraints(constraints: Dictionary) -> String:
 		lines.append(
 			(
 				"必填医患回应：medical_response 必须是对象，不能是文本或 null；"
-				+ "字段 %s；request_id 必须为 %s；response_kind 只能从 %s 选择"
+                               +"字段 %s；request_id 必须为 %s；response_kind 只能从 %s 选择"
 			)
 			% [
 				_join(medical_response.get("fields", [])),
@@ -1232,11 +1190,11 @@ func _render_constraints(constraints: Dictionary) -> String:
 			lines.append(
 				(
 					"  - 答应时结构示例：{\"decision_id\":\"当前决定编号\","
-					+ "\"handling\":\"replace_current\",\"action\":{\"action_id\":"
-					+ "\"当前允许前缀-答话\",\"type\":\"答话\",\"conversation_id\":"
-					+ "\"当前对话编号\",\"say\":\"明确答应的话\",\"narration\":"
-					+ "\"同时表现\",\"photos\":[],\"end\":true},"
-					+ "\"conversation_follow_up\":{\"option_id\":\"%s\"}}"
+										+ "\"handling\":\"replace_current\",\"action\":{\"action_id\":"
+										+ "\"当前允许前缀-答话\",\"type\":\"答话\",\"conversation_id\":"
+										+ "\"当前对话编号\",\"say\":\"明确答应的话\",\"narration\":"
+										+ "\"同时表现\",\"photos\":[],\"end\":true},"
+										+ "\"conversation_follow_up\":{\"option_id\":\"%s\"}}"
 				)
 				% _safe(example_option.get("option_id", ""))
 			)
